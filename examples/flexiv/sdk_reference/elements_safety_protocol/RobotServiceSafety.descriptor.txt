@@ -1,0 +1,200 @@
+name: "RobotServiceSafety.proto"
+package: "proto.robot.safety"
+dependency: "google/protobuf/empty.proto"
+dependency: "CommonDefs.proto"
+dependency: "RobotConfig.proto"
+message_type {
+  name: "GetRebootSafetyControlBoxAbilityResponse"
+  field {
+    name: "ret"
+    number: 1
+    label: LABEL_OPTIONAL
+    type: TYPE_MESSAGE
+    type_name: ".proto.FvrReturnValue"
+  }
+  field {
+    name: "ability"
+    number: 2
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+  }
+}
+message_type {
+  name: "SetRobotMountingAngleRequest"
+  field {
+    name: "angle_rx"
+    number: 1
+    label: LABEL_OPTIONAL
+    type: TYPE_DOUBLE
+  }
+  field {
+    name: "angle_ry"
+    number: 2
+    label: LABEL_OPTIONAL
+    type: TYPE_DOUBLE
+  }
+  field {
+    name: "angle_rz"
+    number: 3
+    label: LABEL_OPTIONAL
+    type: TYPE_DOUBLE
+  }
+  field {
+    name: "real_robot"
+    number: 4
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+  }
+  field {
+    name: "specs_ui_path"
+    number: 5
+    label: LABEL_OPTIONAL
+    type: TYPE_STRING
+  }
+}
+message_type {
+  name: "SetRobotMountingAngleResponse"
+  field {
+    name: "ret"
+    number: 1
+    label: LABEL_OPTIONAL
+    type: TYPE_MESSAGE
+    type_name: ".proto.FvrReturnValue"
+  }
+  field {
+    name: "error_message"
+    number: 2
+    label: LABEL_OPTIONAL
+    type: TYPE_STRING
+  }
+}
+message_type {
+  name: "GetRobotMountingAngleResponse"
+  field {
+    name: "ret"
+    number: 1
+    label: LABEL_OPTIONAL
+    type: TYPE_MESSAGE
+    type_name: ".proto.FvrReturnValue"
+  }
+  field {
+    name: "angle_rx"
+    number: 2
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "angle_ry"
+    number: 3
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "angle_rz"
+    number: 4
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+}
+service {
+  name: "SafetyService"
+  method {
+    name: "GetSafetyParamsApplied"
+    input_type: ".proto.GetSafetyParamsRequest"
+    output_type: ".proto.GetSafetyParamsResponse"
+    options {
+    }
+  }
+  method {
+    name: "GetSafetyParamsBoundary"
+    input_type: ".proto.GetSafetyParamsRequest"
+    output_type: ".proto.GetSafetyParamsResponse"
+    options {
+    }
+  }
+  method {
+    name: "SetSafetyParams"
+    input_type: ".proto.SetSafetyParamsRequest"
+    output_type: ".proto.FvrReturnValue"
+    options {
+    }
+  }
+  method {
+    name: "GetCollisionDetectLevel"
+    input_type: ".google.protobuf.Empty"
+    output_type: ".proto.GetCollisionDetectLevelResponse"
+    options {
+    }
+  }
+  method {
+    name: "SetCollisionDetectLevel"
+    input_type: ".proto.SetCollisionDetectLevelRequest"
+    output_type: ".proto.FvrReturnValue"
+    options {
+    }
+  }
+  method {
+    name: "GetDefaultCollisionDetectLevel"
+    input_type: ".google.protobuf.Empty"
+    output_type: ".proto.GetDefaultCollisionDetectLevelResponse"
+    options {
+    }
+  }
+  method {
+    name: "RebootSafetyControlBox"
+    input_type: ".google.protobuf.Empty"
+    output_type: ".proto.FvrReturnValue"
+    options {
+    }
+  }
+  method {
+    name: "GetRebootSafetyControlBoxAbility"
+    input_type: ".google.protobuf.Empty"
+    output_type: ".proto.robot.safety.GetRebootSafetyControlBoxAbilityResponse"
+    options {
+    }
+  }
+  method {
+    name: "GetUserJntSoftConstraint"
+    input_type: ".google.protobuf.Empty"
+    output_type: ".proto.GetJntSoftConstraintResponse"
+    options {
+    }
+  }
+  method {
+    name: "SetUserJntSoftConstraint"
+    input_type: ".proto.SetJntSoftConstraintRequest"
+    output_type: ".proto.FvrReturnValue"
+    options {
+    }
+  }
+  method {
+    name: "GetDefaultJntSoftConstraint"
+    input_type: ".google.protobuf.Empty"
+    output_type: ".proto.GetJntSoftConstraintResponse"
+    options {
+    }
+  }
+  method {
+    name: "GetSafetyConfigureChecksum"
+    input_type: ".google.protobuf.Empty"
+    output_type: ".proto.GetSafetyConfigureChecksumResponse"
+    options {
+    }
+  }
+  method {
+    name: "SetRobotMountingAngle"
+    input_type: ".proto.robot.safety.SetRobotMountingAngleRequest"
+    output_type: ".proto.robot.safety.SetRobotMountingAngleResponse"
+    options {
+    }
+  }
+  method {
+    name: "GetRobotMountingAngle"
+    input_type: ".google.protobuf.Empty"
+    output_type: ".proto.robot.safety.GetRobotMountingAngleResponse"
+    options {
+    }
+  }
+}
+syntax: "proto3"

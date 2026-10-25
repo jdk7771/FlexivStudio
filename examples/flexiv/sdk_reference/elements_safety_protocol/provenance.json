@@ -1,0 +1,17 @@
+{
+  "source_binary": "/home/nematrix/FlexivElementsStudio/FlexivElementsStudio",
+  "source_sha256": "36e8b47dafb14e4069d8c03b86cd296418a823f0583b0ae7672f745d4a63754c",
+  "package_version_evidence": "/home/nematrix/FlexivElementsStudio/system_version.info: RobotControlApp v3.11.2",
+  "method": "Read ELF PT_LOAD segments and exported protobuf DescriptorTable objects; parse embedded FileDescriptorProto offline. No executable code from the source binary was run.",
+  "descriptors": {
+    "RobotServiceSafety.proto": {
+      "descriptor_table_vaddr": "0x8d3adc0",
+      "length_bytes": 1930
+    },
+    "RobotConfig.proto": {
+      "length_bytes": 2486
+    }
+  },
+  "scope": "Static interface evidence only. No robot connection, RPC invocation, configuration read from live robots, or safety parameter change.",
+  "documentation_search": "Official RDK 1.9.x and 2.1 Safety API docs and v1.9.2 public headers checked. No public documentation found for Elements internal SetSafetyParams."
+}

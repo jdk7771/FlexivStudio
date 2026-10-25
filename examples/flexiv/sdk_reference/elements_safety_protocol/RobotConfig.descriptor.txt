@@ -1,0 +1,516 @@
+name: "RobotConfig.proto"
+package: "proto"
+dependency: "CommonDefs.proto"
+message_type {
+  name: "SafetyConfiguration"
+  field {
+    name: "input_cfg"
+    number: 1
+    label: LABEL_OPTIONAL
+    type: TYPE_UINT32
+  }
+  field {
+    name: "plane_activation"
+    number: 2
+    label: LABEL_OPTIONAL
+    type: TYPE_UINT32
+  }
+  field {
+    name: "plane_cfg"
+    number: 3
+    label: LABEL_OPTIONAL
+    type: TYPE_UINT32
+  }
+}
+message_type {
+  name: "JointConstraints"
+  field {
+    name: "min_pos"
+    number: 1
+    label: LABEL_REPEATED
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "max_pos"
+    number: 2
+    label: LABEL_REPEATED
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "max_speed_nm"
+    number: 3
+    label: LABEL_REPEATED
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "max_speed_rm"
+    number: 4
+    label: LABEL_REPEATED
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "max_tau"
+    number: 5
+    label: LABEL_REPEATED
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "max_current"
+    number: 6
+    label: LABEL_REPEATED
+    type: TYPE_FLOAT
+  }
+}
+message_type {
+  name: "SafetyPlane"
+  field {
+    name: "a"
+    number: 1
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "b"
+    number: 2
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "c"
+    number: 3
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "d"
+    number: 4
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+}
+message_type {
+  name: "TCPConstraints"
+  field {
+    name: "orientation_x"
+    number: 1
+    label: LABEL_REPEATED
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "orientation_z"
+    number: 2
+    label: LABEL_REPEATED
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "orientation_x_tol"
+    number: 3
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "orientation_z_tol"
+    number: 4
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "safety_planes"
+    number: 5
+    label: LABEL_REPEATED
+    type: TYPE_MESSAGE
+    type_name: ".proto.SafetyPlane"
+  }
+  field {
+    name: "max_linear_speed_nm"
+    number: 6
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "max_linear_speed_rm"
+    number: 7
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "max_angular_speed_nm"
+    number: 8
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "max_angular_speed_rm"
+    number: 9
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "max_power_nm"
+    number: 10
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "max_momentum_nm"
+    number: 11
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "max_force_nm"
+    number: 12
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "max_torque_nm"
+    number: 13
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "max_power_rm"
+    number: 14
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "max_momentum_rm"
+    number: 15
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "max_force_rm"
+    number: 16
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "max_torque_rm"
+    number: 17
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "sphere_inner_radius"
+    number: 18
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "sphere_outer_radius"
+    number: 19
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "linear_velocity_stop_cat"
+    number: 20
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+  }
+  field {
+    name: "angular_velocity_stop_cat"
+    number: 21
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+  }
+  field {
+    name: "power_stop_cat"
+    number: 22
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+  }
+  field {
+    name: "momentum_stop_cat"
+    number: 23
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+  }
+  field {
+    name: "tcp_force_stop_cat"
+    number: 24
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+  }
+  field {
+    name: "tcp_torque_stop_cat"
+    number: 25
+    label: LABEL_OPTIONAL
+    type: TYPE_BOOL
+  }
+}
+message_type {
+  name: "LinkInfo"
+  field {
+    name: "kine_a"
+    number: 1
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "kine_d"
+    number: 2
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "kine_alpha"
+    number: 3
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "mass"
+    number: 4
+    label: LABEL_OPTIONAL
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "com"
+    number: 6
+    label: LABEL_REPEATED
+    type: TYPE_FLOAT
+  }
+  field {
+    name: "inertia"
+    number: 7
+    label: LABEL_REPEATED
+    type: TYPE_FLOAT
+  }
+}
+message_type {
+  name: "Gravity"
+  field {
+    name: "g_x"
+    number: 1
+    label: LABEL_OPTIONAL
+    type: TYPE_DOUBLE
+  }
+  field {
+    name: "g_y"
+    number: 2
+    label: LABEL_OPTIONAL
+    type: TYPE_DOUBLE
+  }
+  field {
+    name: "g_z"
+    number: 3
+    label: LABEL_OPTIONAL
+    type: TYPE_DOUBLE
+  }
+}
+message_type {
+  name: "SystemParameters"
+  field {
+    name: "gravity"
+    number: 1
+    label: LABEL_OPTIONAL
+    type: TYPE_MESSAGE
+    type_name: ".proto.Gravity"
+  }
+  field {
+    name: "links"
+    number: 2
+    label: LABEL_REPEATED
+    type: TYPE_MESSAGE
+    type_name: ".proto.LinkInfo"
+  }
+}
+message_type {
+  name: "SafetyParams"
+  field {
+    name: "is_active"
+    number: 1
+    label: LABEL_OPTIONAL
+    type: TYPE_UINT32
+  }
+  field {
+    name: "is_connected"
+    number: 2
+    label: LABEL_OPTIONAL
+    type: TYPE_UINT32
+  }
+  field {
+    name: "safety_configuration"
+    number: 3
+    label: LABEL_OPTIONAL
+    type: TYPE_MESSAGE
+    type_name: ".proto.SafetyConfiguration"
+  }
+  field {
+    name: "joint_constraints"
+    number: 4
+    label: LABEL_OPTIONAL
+    type: TYPE_MESSAGE
+    type_name: ".proto.JointConstraints"
+  }
+  field {
+    name: "tcp_constraints"
+    number: 5
+    label: LABEL_OPTIONAL
+    type: TYPE_MESSAGE
+    type_name: ".proto.TCPConstraints"
+  }
+  field {
+    name: "system_parameters"
+    number: 6
+    label: LABEL_OPTIONAL
+    type: TYPE_MESSAGE
+    type_name: ".proto.SystemParameters"
+  }
+}
+message_type {
+  name: "GetSafetyParamsRequest"
+  field {
+    name: "serial_number"
+    number: 1
+    label: LABEL_OPTIONAL
+    type: TYPE_STRING
+  }
+}
+message_type {
+  name: "GetSafetyParamsResponse"
+  field {
+    name: "ret"
+    number: 1
+    label: LABEL_OPTIONAL
+    type: TYPE_MESSAGE
+    type_name: ".proto.FvrReturnValue"
+  }
+  field {
+    name: "params"
+    number: 2
+    label: LABEL_OPTIONAL
+    type: TYPE_MESSAGE
+    type_name: ".proto.SafetyParams"
+  }
+}
+message_type {
+  name: "SetSafetyParamsRequest"
+  field {
+    name: "serial_number"
+    number: 1
+    label: LABEL_OPTIONAL
+    type: TYPE_STRING
+  }
+  field {
+    name: "params"
+    number: 2
+    label: LABEL_OPTIONAL
+    type: TYPE_MESSAGE
+    type_name: ".proto.SafetyParams"
+  }
+}
+message_type {
+  name: "GetCollisionDetectLevelResponse"
+  field {
+    name: "ret"
+    number: 1
+    label: LABEL_OPTIONAL
+    type: TYPE_MESSAGE
+    type_name: ".proto.FvrReturnValue"
+  }
+  field {
+    name: "detect_level"
+    number: 2
+    label: LABEL_OPTIONAL
+    type: TYPE_STRING
+  }
+}
+message_type {
+  name: "SetCollisionDetectLevelRequest"
+  field {
+    name: "detect_level"
+    number: 1
+    label: LABEL_OPTIONAL
+    type: TYPE_STRING
+  }
+}
+message_type {
+  name: "GetDefaultCollisionDetectLevelResponse"
+  field {
+    name: "ret"
+    number: 1
+    label: LABEL_OPTIONAL
+    type: TYPE_MESSAGE
+    type_name: ".proto.FvrReturnValue"
+  }
+  field {
+    name: "default_detect_level"
+    number: 2
+    label: LABEL_OPTIONAL
+    type: TYPE_STRING
+  }
+}
+message_type {
+  name: "GetJntSoftConstraintResponse"
+  field {
+    name: "ret"
+    number: 1
+    label: LABEL_OPTIONAL
+    type: TYPE_MESSAGE
+    type_name: ".proto.FvrReturnValue"
+  }
+  field {
+    name: "soft_constraint"
+    number: 2
+    label: LABEL_OPTIONAL
+    type: TYPE_STRING
+  }
+}
+message_type {
+  name: "GetSafetyConfigureChecksumResponse"
+  field {
+    name: "ret"
+    number: 1
+    label: LABEL_OPTIONAL
+    type: TYPE_MESSAGE
+    type_name: ".proto.FvrReturnValue"
+  }
+  field {
+    name: "safety_configure_checksum"
+    number: 2
+    label: LABEL_OPTIONAL
+    type: TYPE_UINT32
+  }
+}
+message_type {
+  name: "SetJntSoftConstraintRequest"
+  field {
+    name: "soft_constraint"
+    number: 1
+    label: LABEL_OPTIONAL
+    type: TYPE_STRING
+  }
+}
+enum_type {
+  name: "SafetyParamsSize"
+  value {
+    name: "SAFETY_PARAMS_NONE"
+    number: 0
+  }
+  value {
+    name: "SAFETY_PARAMS_VEC_DOF"
+    number: 3
+  }
+  value {
+    name: "SAFETY_PARAMS_DOF"
+    number: 7
+  }
+  value {
+    name: "SAFETY_PARAMS_TENSOR_DOF"
+    number: 6
+  }
+  value {
+    name: "SAFETY_PARAMS_N_PLANES"
+    number: 8
+  }
+  value {
+    name: "SAFETY_PARAMS_PLANE_ELEMENTS_NUM"
+    number: 4
+  }
+}
+syntax: "proto3"

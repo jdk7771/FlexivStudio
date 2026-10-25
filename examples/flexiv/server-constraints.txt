@@ -1,0 +1,4 @@
+# Driver 550 on the target H20 server: use CUDA 11.8 wheels, not the repo's cu128 default.
+torch==2.7.1+cu118
+torchvision==0.22.1+cu118
+torchcodec==0.5.0

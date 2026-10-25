@@ -13,6 +13,18 @@
 # limitations under the License.
 
 ### Environments & Dependencies ###
+# FlexivStudio machine-local environments and training/deployment artifacts.
+/.uv-bootstrap/
+/.python/
+/.conda-envs/
+/outputs/
+/checkpoints/
+/models/
+/datasets/
+/deployment_logs/
+/reports/
+/examples/flexiv/deploy_config.local.json
+
 .env
 .venv
 env/

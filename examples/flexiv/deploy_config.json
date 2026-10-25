@@ -1,0 +1,64 @@
+{
+  "checkpoint": "/home/nematrix/snap/models/DualArm_FoldTowel/pretrained_model",
+  "base_model": "/home/nematrix/snap/models/pi05_base",
+  "tokenizer": "/home/nematrix/snap/models/DualArm_FoldTowel/pretrained_model/tokenizer",
+  "task": "DualArm_FoldTowel",
+  "device": "cuda:0",
+  "fps": 15,
+  "chunk_size": 50,
+  "training_max_delay": 8,
+  "rtc_execution_horizon": 10,
+  "rtc_queue_threshold": 25,
+  "num_inference_steps": 10,
+  "max_observation_age_s": 5.0,
+  "action_timeout_s": 10.0,
+  "duration_s": 60.0,
+  "start_pose": {
+    "manifest": "/home/nematrix/snap/reports/dual_arm_fold_towel_2026-10-23/conversion_manifest.json",
+    "scene": "scene_0001",
+    "max_joint_delta_rad": 1.0,
+    "waypoint_step_rad": 0.05,
+    "joint_tolerance_rad": 0.02,
+    "gripper_tolerance_m": 0.005,
+    "timeout_s": 60.0
+  },
+  "telemetry": "/home/nematrix/snap/deployment_logs/DualArm_FoldTowel.jsonl",
+  "hardware": {
+    "network_interface_whitelist": ["192.168.1.32"],
+    "control_mode": "NRT_JOINT_IMPEDANCE",
+    "connect_timeout_s": 15.0,
+    "max_joint_velocity_rad_s": 0.5,
+    "max_joint_acceleration_rad_s2": 1.0,
+    "max_target_error_rad": 0.25,
+    "gripper_speed_m_s": 0.2,
+    "gripper_open_force_n": -65.0,
+    "gripper_close_force_n": 45.0,
+    "gripper_min_m": 0.0,
+    "gripper_max_m": 0.1,
+    "gripper_deadband_m": 0.001,
+    "camera_width": 1280,
+    "camera_height": 720,
+    "camera_fps": 15,
+    "max_camera_age_s": 0.2,
+    "max_camera_skew_s": 0.1,
+    "arms": {
+      "left": {
+        "serial": "Rizon4-063906",
+        "tool": "Teleop-GN01",
+        "gripper": "Flexiv-GN01",
+        "max_contact_torque_nm": [50, 50, 50, 50, 39, 39, 39]
+      },
+      "right": {
+        "serial": "Rizon4R-062106",
+        "tool": "Teleop-GN01",
+        "gripper": "Flexiv-GN01",
+        "max_contact_torque_nm": [50, 50, 50, 50, 39, 39, 39]
+      }
+    },
+    "cameras": {
+      "image": "350122061994",
+      "image2": "840412062188",
+      "image3": "350122063150"
+    }
+  }
+}

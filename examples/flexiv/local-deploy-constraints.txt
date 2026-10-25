@@ -1,0 +1,10 @@
+# Local RTX 5090 uses cu128, independently of the H20 server's cu118 environment.
+torch==2.7.1+cu128
+torchvision==0.22.1+cu128
+numpy==2.2.6
+flexivrdk==1.9.2
+# Match the actual PI05 training environment on server port 1020.
+transformers==5.5.4
+peft==0.21.2
+safetensors==0.8.0
+huggingface-hub==1.33.0
