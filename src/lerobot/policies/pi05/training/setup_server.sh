@@ -2,7 +2,7 @@
 # Install an isolated Python environment. This script does not launch training.
 set -euo pipefail
 
-task_repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+task_repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../../../.." && pwd)"
 task_work_root="$(dirname -- "$task_repo_root")"
 task_bootstrap="$task_work_root/.uv-bootstrap"
 task_system_python="${PYTHON_BOOTSTRAP:-/usr/local/bin/python3}"
@@ -27,7 +27,7 @@ cd "$task_repo_root"
     'torch==2.7.1' 'torchvision==0.22.1' \
     --index-url https://download.pytorch.org/whl/cu118
 "$task_uv" pip install --python "$task_python" \
-    -c examples/flexiv/server-constraints.txt \
+    -c "$task_repo_root/src/lerobot/policies/pi05/training/server-constraints.txt" \
     --index https://download.pytorch.org/whl/cu118 \
     --index-strategy unsafe-best-match \
     -e '.[dataset,training,pi,peft]' h5py pyyaml

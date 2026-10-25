@@ -2,7 +2,7 @@
 # MANUAL installation only; does not download weights, access hardware, or run deployment.
 set -euo pipefail
 
-task_repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+task_repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)"
 task_workspace="$(dirname -- "$task_repo_root")"
 task_env_prefix="${LEROBOT_ENV_PREFIX:-$task_workspace/.conda-envs/lerobot-deploy}"
 task_conda="${CONDA_EXE:-conda}"
@@ -22,11 +22,11 @@ task_python="$task_env_prefix/bin/python"
 "$task_python" -m pip install uv --index-url "$task_pypi"
 task_uv="$task_env_prefix/bin/uv"
 cd "$task_repo_root"
-"$task_uv" pip install --python "$task_python" -c examples/flexiv/local-deploy-constraints.txt \
+"$task_uv" pip install --python "$task_python" -c examples/flexiv/setup/local-deploy-constraints.txt \
     'torch==2.7.1+cu128' 'torchvision==0.22.1+cu128' \
     --index-url https://download.pytorch.org/whl/cu128 --extra-index-url "$task_pypi" \
     --index-strategy unsafe-best-match
-"$task_uv" pip install --python "$task_python" -c examples/flexiv/local-deploy-constraints.txt \
+"$task_uv" pip install --python "$task_python" -c examples/flexiv/setup/local-deploy-constraints.txt \
     -e '.[pi,peft]' 'pyrealsense2>=2.55,<3' 'flexivrdk==1.9.2' 'h5py>=3.12,<4' --index-url "$task_pypi"
 "$task_conda" env config vars set --prefix "$task_env_prefix" \
     "HF_HOME=$task_workspace/.cache/huggingface" "PIP_CACHE_DIR=$PIP_CACHE_DIR" \

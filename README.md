@@ -3,10 +3,10 @@
 基于 LeRobot 的 Flexiv 双臂项目，统一服务器训练和本地部署代码。
 
 - [项目入口与两端同步](examples/flexiv/README.md)
-- [服务器训练](examples/flexiv/README_server.md)
-- [本地部署](examples/flexiv/README_local_deploy.md)
+- [π0.5 训练配置与启动](src/lerobot/policies/pi05/training/README.md)
+- [本地部署](examples/flexiv/docs/README_local_deploy.md)
 - [数据转换](examples/port_datasets/README_flexiv.md)
-- [代码对齐记录](examples/flexiv/SOURCE_ALIGNMENT.md) · [实验记录](examples/flexiv/EXPERIMENT_LOG.md)
+- [代码对齐记录](examples/flexiv/docs/SOURCE_ALIGNMENT.md) · [实验记录](examples/flexiv/docs/EXPERIMENT_LOG.md)
 
 以下保留上游 LeRobot 文档与许可证信息。
 

@@ -10,9 +10,9 @@
 - 三组均从同一 PI05 base 开始：BF16、chunk 50、training RTC 最大前缀延迟 8、梯度检查点、50,000 次优化器更新。训练 loss 每 50 step 记一次，验证 loss 每 1,000 step 计算一次，每 2,500 step 保存 checkpoint。视频后端为 `torchcodec`；日志里 `data_s` 通常约 0.001 s，训练耗时主要在模型更新。
 - 训练环境：LeRobot 0.6.2、PyTorch 2.7.1+cu118、Transformers 5.5.4、PEFT 0.21.2。服务器代码目录没有 Git 元数据；下列三个关键文件与本地工作区 SHA256 一致：`lerobot_train.py` 为 `61de8a5794a149bd9e0cfe409178d58e5cebfc3d288fa0c04b27cdf8b7e83c02`，`modeling_pi05.py` 为 `7cf56d77f29a0d3564bde7e7e1fa7333fffd0d81472d2d393cf2afea6967716c`，`datasets/factory.py` 为 `ee9580a1d17e6654f3ce18eec852022f229cb05a754df2fbc73431128c1c1f2b`。
 
-数据证据：[转换清单](../../../reports/dual_arm_fold_towel_2026-10-23/conversion_manifest.json)、[loss 曲线](../../../reports/dual_arm_fold_towel_2026-10-23/loss_overview.png)、[解析后的指标](../../../reports/dual_arm_fold_towel_2026-10-23/summary.json)。曲线中的浅色线是每 50 step 的训练 loss 平均值，深色线是 5 点平滑，红点线是验证 loss，灰色竖虚线是当时最新 checkpoint。验证 loss 不是折毛巾成功率。
+数据证据：[转换清单](../../../../reports/dual_arm_fold_towel_2026-10-23/conversion_manifest.json)、[loss 曲线](../../../../reports/dual_arm_fold_towel_2026-10-23/loss_overview.png)、[解析后的指标](../../../../reports/dual_arm_fold_towel_2026-10-23/summary.json)。曲线中的浅色线是每 50 step 的训练 loss 平均值，深色线是 5 点平滑，红点线是验证 loss，灰色竖虚线是当时最新 checkpoint。验证 loss 不是折毛巾成功率。
 
-本地实时网页：[loss_dashboard.py](../../../reports/dual_arm_fold_towel_2026-10-23/loss_dashboard.py) 由 [用户服务](../../../reports/dual_arm_fold_towel_2026-10-23/dakun-loss-dashboard.service) 保持运行，访问 `http://127.0.0.1:8765`。它每 60 秒通过 SSH 只读同步三份服务器训练日志和最新 checkpoint，网页显示训练/验证 loss、step，并提供总览、单实验曲线和 CSV 下载。SSH 断开时网页仍显示本地快照及同步错误。若重启电脑或连接断开，先在本机终端执行 `ssh -p 1020 -M -S /tmp/codex-master -N dakun@101.132.150.51` 并交互输入登录密码；保持该终端打开即可恢复实时同步。密码不会写进脚本。
+本地实时网页：[loss_dashboard.py](../../../../reports/dual_arm_fold_towel_2026-10-23/loss_dashboard.py) 由 [用户服务](../../../../reports/dual_arm_fold_towel_2026-10-23/dakun-loss-dashboard.service) 保持运行，访问 `http://127.0.0.1:8765`。它每 60 秒通过 SSH 只读同步三份服务器训练日志和最新 checkpoint，网页显示训练/验证 loss、step，并提供总览、单实验曲线和 CSV 下载。SSH 断开时网页仍显示本地快照及同步错误。若重启电脑或连接断开，先在本机终端执行 `ssh -p 1020 -M -S /tmp/codex-master -N dakun@101.132.150.51` 并交互输入登录密码；保持该终端打开即可恢复实时同步。密码不会写进脚本。
 
 ```bash
 systemctl --user status dakun-loss-dashboard.service
@@ -27,7 +27,7 @@ systemctl --user restart dakun-loss-dashboard.service
 | E2  | 全量微调，GPU 5+6 | 每卡 8、全局 16 / `1e-5` | 冻结视觉编码器；其余 VLM 与动作专家参数参与全量微调                                                     | `/mnt/work/dakun/outputs/DualArm_FoldTowel_pi05_rtc_full_gpu5_6`   |
 | E3  | LoRA，GPU 7       | 全局 8 / `1e-4`          | 与 E1 相同的 LoRA 范围、rank 和 alpha                                                                   | `/mnt/work/dakun/outputs/DualArm_FoldTowel_pi05_rtc_lora_gpu7_bs8` |
 
-配置证据：[E1 保存配置](../../../models/DualArm_FoldTowel/experiment1/012500/pretrained_model/train_config.json)、[E2 保存配置](../../../reports/dual_arm_fold_towel_2026-10-23/train_config_full_gpu5_6.json)、[E3 保存配置](../../../reports/dual_arm_fold_towel_2026-10-23/train_config_lora_gpu7.json)。E1 adapter 有 80 个 LoRA 张量、2,705,408 个参数，约 10.8 MB；它必须和原始 PI05 base 一起用于推理。
+配置证据：[E1 保存配置](../../../../models/DualArm_FoldTowel/experiment1/012500/pretrained_model/train_config.json)、[E2 保存配置](../../../../reports/dual_arm_fold_towel_2026-10-23/train_config_full_gpu5_6.json)、[E3 保存配置](../../../../reports/dual_arm_fold_towel_2026-10-23/train_config_lora_gpu7.json)。E1 adapter 有 80 个 LoRA 张量、2,705,408 个参数，约 10.8 MB；它必须和原始 PI05 base 一起用于推理。
 
 ## 训练快照
 

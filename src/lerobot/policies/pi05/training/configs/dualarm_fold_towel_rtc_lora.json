@@ -1,0 +1,60 @@
+{
+  "dataset": {
+    "repo_id": "local/DualArm_FoldTowel_joint_rtc",
+    "root": "/mnt/work/dakun/DualArm_FoldTowel_joint_rtc",
+    "video_backend": "torchcodec",
+    "eval_split": 0.08536585365853659
+  },
+  "policy": {
+    "type": "pi05",
+    "pretrained_path": "/mnt/work/dakun/models/pi05_base",
+    "text_tokenizer_name": "/mnt/work/dakun/models/paligemma-3b-pt-224",
+    "device": "cuda",
+    "dtype": "bfloat16",
+    "push_to_hub": false,
+    "use_relative_actions": true,
+    "relative_exclude_joints": [
+      "gripper"
+    ],
+    "chunk_size": 50,
+    "rtc_training_max_delay": 8,
+    "freeze_vision_encoder": true,
+    "train_expert_only": true,
+    "gradient_checkpointing": true,
+    "optimizer_lr": 0.0001,
+    "optimizer_weight_decay": 1e-05,
+    "scheduler_warmup_steps": 1000,
+    "scheduler_decay_steps": 50000
+  },
+  "output_dir": null,
+  "job_name": "DualArm_FoldTowel_pi05_rtc_lora",
+  "seed": 1000,
+  "batch_size": 16,
+  "num_workers": 4,
+  "steps": 50000,
+  "save_freq": 2500,
+  "log_freq": 50,
+  "env_eval_freq": 0,
+  "eval_steps": 1000,
+  "max_eval_samples": 256,
+  "parallelism": {
+    "dp_replicate": 1
+  },
+  "accelerator": {
+    "mixed_precision": "bf16",
+    "gradient_accumulation": {
+      "steps": 1
+    }
+  },
+  "peft": {
+    "target_modules": null,
+    "full_training_modules": null,
+    "method_type": "LORA",
+    "init_type": null,
+    "r": 32,
+    "lora_alpha": 32
+  },
+  "wandb": {
+    "enable": false
+  }
+}

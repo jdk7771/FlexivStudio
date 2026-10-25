@@ -56,7 +56,7 @@ RTC 引擎在设备连接前完成构造，避免预处理器/tokenizer 复制�
 conda activate /home/nematrix/snap/.conda-envs/lerobot-deploy
 ```
 
-新机器可运行 `bash examples/flexiv/setup_local_deploy.sh` 重建环境；该脚本会拒绝覆盖现有路径。环境及安装缓存都放在 `/home/nematrix/snap` 下。脚本安装 CUDA 12.8 的 PyTorch 2.7.1，与服务器 PyTorch 主版本一致；**不要沿用服务器的 cu118 安装命令**。机器人软件 3.11.1 对应 RDK 1.9.2，采集容器也使用 1.9.2；不混用本机 base 环境的 RDK 2.1。
+新机器可运行 `bash examples/flexiv/setup/setup_local_deploy.sh` 重建环境；该脚本会拒绝覆盖现有路径。环境及安装缓存都放在 `/home/nematrix/snap` 下。脚本安装 CUDA 12.8 的 PyTorch 2.7.1，与服务器 PyTorch 主版本一致；**不要沿用服务器的 cu118 安装命令**。机器人软件 3.11.1 对应 RDK 1.9.2，采集容器也使用 1.9.2；不混用本机 base 环境的 RDK 2.1。
 安装 `lerobot[pi,peft]`、RealSense、RDK 和 `h5py` 即可。`h5py` 用于每次启动读取原始采集首帧；实时 RGB 输入不经过视频文件，不需要 torchcodec/视频解码依赖。
 
 ## 准备 checkpoint

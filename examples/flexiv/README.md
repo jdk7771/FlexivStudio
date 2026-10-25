@@ -1,19 +1,58 @@
-# FlexivStudio：训练与部署共用代码
+# Flexiv 双臂部署与实验资料
 
-本仓库基于 LeRobot，代码目录名保留 `lerobot`，Python 包名也仍是 `lerobot`。
+π0.5 训练统一放在 [policies/pi05/training](../../src/lerobot/policies/pi05/training/README.md)。本目录保留硬件部署入口，文档和环境安装分别放在 `docs/`、`setup/`。
 
-| 用途                | 代码位置                                            | 使用说明                                              |
-| ------------------- | --------------------------------------------------- | ----------------------------------------------------- |
-| 服务器训练          | `/mnt/work/dakun/lerobot`                           | [README_server.md](README_server.md)                  |
-| 本地部署            | `/home/nematrix/snap/lerobot`                       | [README_local_deploy.md](README_local_deploy.md)      |
-| 原始数据转换        | `examples/port_datasets/port_flexiv.py`             | [README_flexiv.md](../port_datasets/README_flexiv.md) |
-| 训练/部署契约与检查 | `flexiv_deploy_contract.py`、`test_local_deploy.py` | [对齐记录](SOURCE_ALIGNMENT.md)                       |
+```text
+examples/flexiv/
+├── deploy_dualarm.py             # π0.5 / trained RTC 部署入口
+├── deploy_config.json            # 当前本地路径、机械臂和相机配置
+├── flexiv_deploy_contract.py     # checkpoint 与动作约定检查
+├── flexiv_deploy_hardware.py     # RDK / RealSense 适配
+├── goHome.py                     # 返回采集首帧姿态
+├── test_local_deploy.py          # 纯离线 / 模拟设备测试
+├── setup/
+│   ├── setup_local_deploy.sh
+│   ├── local-deploy-constraints.txt
+│   └── verify_local_deploy_env.py
+└── docs/
+    ├── README_local_deploy.md
+    ├── EXPERIMENT_LOG.md
+    ├── SOURCE_ALIGNMENT.md
+    ├── RDK_FORCE_INTERFACE_AUDIT.md
+    └── sdk_reference/
+```
 
-服务器与本地使用同一套 `src/lerobot`。训练环境按服务器驱动使用 CUDA 11.8，本地 RTX 5090 部署环境使用 CUDA 12.8；依赖约束分别保存在 `server-constraints.txt` 和 `local-deploy-constraints.txt`。
+| 用途                         | 说明                                                           |
+| ---------------------------- | -------------------------------------------------------------- |
+| π0.5 训练配置、启动、恢复    | [训练入口](../../src/lerobot/policies/pi05/training/README.md) |
+| 本地部署、模型路径、设备配置 | [部署说明](docs/README_local_deploy.md)                        |
+| 原始数据转换                 | [数据转换](../port_datasets/README_flexiv.md)                  |
+| 训练和真机测试记录           | [实验记录](docs/EXPERIMENT_LOG.md)                             |
+| 源码来源和首次对齐           | [对齐记录](docs/SOURCE_ALIGNMENT.md)                           |
+| RDK 接口证据                 | [接口核查](docs/RDK_FORCE_INTERFACE_AUDIT.md)                  |
 
-## Git 同步
+## 本地入口
 
-新机器保留 `lerobot` 目录名克隆：
+```bash
+# 检查 checkpoint 文件，不连接设备
+python examples/flexiv/deploy_dualarm.py --check
+
+# 离线 / 模拟设备测试
+python -m unittest discover -s examples/flexiv -p test_local_deploy.py -v
+
+# 新机器安装部署环境
+bash examples/flexiv/setup/setup_local_deploy.sh
+```
+
+`deploy_config.json` 沿用本机模型、数据和设备路径。其他机器可以复制为 Git 忽略的 `deploy_config.local.json`，调整后通过 `--config` 指定。模型权重、数据和部署日志继续保存在各机器原有目录。
+
+动作顺序为左臂 7 关节、左夹爪、右臂 7 关节、右夹爪；3 路 224×224 RGB、15 Hz、chunk 50，关节相对动作、夹爪绝对动作。具体控制行为见部署说明。
+
+## 两端代码同步
+
+本地代码：`/home/nematrix/snap/lerobot`；训练服务器代码：`/mnt/work/dakun/lerobot`。两端共用 `src/lerobot`，环境分别使用本地 cu128 与服务器 cu118。
+
+新机器克隆时保留 `lerobot` 目录名：
 
 ```bash
 git clone https://github.com/jdk7771/FlexivStudio.git lerobot
@@ -21,41 +60,12 @@ cd lerobot
 git remote add upstream https://github.com/huggingface/lerobot.git
 ```
 
-已有目录完成首次对齐后，在服务器或本地更新：
+已有目录更新：
 
 ```bash
-cd /你的路径/lerobot
 git status --short
 git pull --ff-only origin main
 git rev-parse HEAD
 ```
 
-两端 `HEAD` 相同且 `git status --short` 为空，表示受 Git 管理的代码一致。有本地修改时先提交或暂存，再更新。不要用 `rsync --delete` 或 `git reset --hard` 覆盖另一端的工作。
-
-修改后在对应机器提交，再由另一端拉取：
-
-```bash
-git add 具体修改的文件
-git commit -m "Describe the change"
-git push origin main
-```
-
-`origin` 指向 FlexivStudio，`upstream` 指向 Hugging Face LeRobot。上游更新需要单独合并并验证，日常两端同步使用 `origin/main`。GitHub 写入凭据通过凭据管理器或 SSH 配置，不放进仓库 URL、脚本或配置文件。
-
-## 数据与模型
-
-Git 管理源码、配置模板、依赖约束和文档。训练数据、模型、优化器状态、部署日志保留在各机器的数据目录；代码更新后原路径继续有效。`deploy_config.json` 记录本地设备与路径，其他机器需要按实际硬件调整，可复制为 Git 忽略的 `deploy_config.local.json` 后通过 `--config` 使用。
-
-两端统一动作顺序为左臂 7 关节、左夹爪、右臂 7 关节、右夹爪；3 路 224×224 RGB，15 Hz，chunk 50，关节相对动作、夹爪绝对动作。部署前使用 checkpoint 的预处理/后处理和本地检查入口，详见部署说明。
-
-## 无硬件验证
-
-在已安装对应依赖的环境中执行：
-
-```bash
-python -m unittest discover -s examples/port_datasets -p test_port_flexiv.py -v
-python -m unittest discover -s examples/flexiv -p test_local_deploy.py -v
-for script in examples/flexiv/*.sh; do bash -n "$script"; done
-```
-
-这些单元测试使用临时数据或模拟设备，不连接机械臂或相机。训练脚本可使用 `--print-command` 检查参数。
+`origin` 指向 FlexivStudio，`upstream` 指向 Hugging Face LeRobot。更新前处理本机修改；提交源码后由另一端拉取。两端提交相同且受 Git 管理的文件无修改，表示代码一致。模型、训练状态和数据通过各机器的数据目录管理。
