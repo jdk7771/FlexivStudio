@@ -24,6 +24,8 @@
 /deployment_logs/
 /reports/
 /examples/flexiv/deploy_config.local.json
+/src/lerobot/policies/pi05/checkpoints/rtc_full/
+/src/lerobot/policies/pi05/deployment/deploy_config.local.json
 
 .env
 .venv

@@ -2,6 +2,8 @@
 
 π0.5 训练统一放在 [policies/pi05/training](../../src/lerobot/policies/pi05/training/README.md)。本目录保留硬件部署入口，文档和环境安装分别放在 `docs/`、`setup/`。
 
+RTC 全量微调的本地 checkpoint 和部署副本统一收在 [policies/pi05](../../src/lerobot/policies/pi05/LOCAL_WORKFLOW.md)，部署副本支持选择 3 万、4 万、4.5 万、5 万步权重。
+
 ```text
 examples/flexiv/
 ├── deploy_dualarm.py             # π0.5 / trained RTC 部署入口
