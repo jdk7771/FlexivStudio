@@ -1,0 +1,16 @@
+Validation completed without launching full-size GPU training.
+
+- Bash syntax and fresh/resume/CPU-check command generation: passed.
+- Python compilation: passed.
+- RTC tests: 6 passed (CPU; includes real upstream tiny-model forward/backward with checkpointing).
+- Real dataset: 112 train episodes, 11 held-out episodes; 25,957 training frames; 256 validation frames.
+- Three cameras and local tokenizer: passed.
+- Pretrained model: all 813 state-dict keys/shapes checked on meta device; 812 stored tensors plus tied embedding alias.
+- CUDA initialized by CPU data check: false.
+- Existing reader versus isolated LeRobot 0.4.4 reader: identical state/action/task and three image hashes at training frames 0, 12978, 25956 (includes episode-end padding).
+- Reference JSON settings: unchanged except model implementation name, output name/path and explicit resolved defaults/provenance.
+- Official archive: all 140 files present; only two upstream files patched (see rtc.patch).
+
+Not executed: full-size four-GPU training, optimizer checkpoint round-trip on the full-size model, real-robot inference.
+
+Detailed local logs: /mnt/work/dakun/setup_artifacts/openpi-tests.log and openpi-check-data.log.

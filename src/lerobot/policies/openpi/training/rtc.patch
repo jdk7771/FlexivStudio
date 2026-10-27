@@ -1,0 +1,62 @@
+--- a/src/openpi/models_pytorch/pi0_pytorch.py
++++ b/src/openpi/models_pytorch/pi0_pytorch.py
+@@ -29,8 +29,8 @@
+     if dimension % 2 != 0:
+         raise ValueError(f"dimension ({dimension}) must be divisible by 2")
+ 
+-    if time.ndim != 1:
+-        raise ValueError("The time tensor is expected to be of shape `(batch_size, )`.")
++    if time.ndim not in (1, 2):
++        raise ValueError("Time must have shape (batch,) or (batch, action_horizon).")
+ 
+     dtype = get_safe_dtype(torch.float64, device.type)
+     fraction = torch.linspace(0.0, 1.0, dimension // 2, dtype=dtype, device=device)
+@@ -38,8 +38,8 @@
+ 
+     # Compute the outer product
+     scaling_factor = 1.0 / period * 2 * math.pi
+-    sin_input = scaling_factor[None, :] * time[:, None]
+-    return torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=1)
++    sin_input = scaling_factor * time[..., None]
++    return torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=-1)
+ 
+ 
+ def sample_beta(alpha, beta, bsize, device):
+@@ -314,9 +314,11 @@
+ 
+         return embs, pad_masks, att_masks, adarms_cond
+ 
+-    def forward(self, observation, actions, noise=None, time=None) -> Tensor:
++    def forward(self, observation, actions, noise=None, time=None, prefix_mask=None) -> Tensor:
+         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
+-        images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=True)
++        images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(
++            observation, train=self.training and getattr(self.config, "image_augmentation", True)
++        )
+ 
+         if noise is None:
+             noise = self.sample_noise(actions.shape, actions.device)
+@@ -324,7 +326,11 @@
+         if time is None:
+             time = self.sample_time(actions.shape[0], actions.device)
+ 
+-        time_expanded = time[:, None, None]
++        if prefix_mask is not None:
++            if not self.pi05 or prefix_mask.shape != actions.shape[:2] or prefix_mask.dtype != torch.bool:
++                raise ValueError("RTC requires pi05 and a boolean (batch, action_horizon) prefix mask.")
++            time = torch.where(prefix_mask, 0.0, time[:, None])
++        time_expanded = time[..., None] if time.ndim == 2 else time[:, None, None]
+         x_t = time_expanded * noise + (1 - time_expanded) * actions
+         u_t = noise - actions
+ 
+--- a/src/openpi/models_pytorch/transformers_replace/models/gemma/modeling_gemma.py
++++ b/src/openpi/models_pytorch/transformers_replace/models/gemma/modeling_gemma.py
+@@ -87,7 +87,7 @@
+         #self.dense.to(dtype=torch.bfloat16).to(dtype=torch.float32)
+         modulation = self.dense(cond)
+         # Reshape modulation to broadcast properly: [batch, 1, features] for [batch, seq, features]
+-        if len(x.shape) == 3:  # [batch, seq, features]
++        if x.ndim == 3 and modulation.ndim == 2:  # Scalar time; RTC already has a token axis.
+             modulation = modulation.unsqueeze(1)
+         
+         scale, shift, gate = torch.chunk(modulation, 3, dim=-1)

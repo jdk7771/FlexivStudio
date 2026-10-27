@@ -6,27 +6,44 @@
 training/
 ├── configs/                           # 新训练的参数模板
 │   ├── dualarm_fold_towel_rtc_lora.json
+│   ├── dualarm_fold_towel_rtc_frozen_vision.json
+│   ├── dualarm_fold_towel_rtc_unfrozen_vision.json
 │   ├── dualarm_fold_towel_rtc_full.json
-│   └── dualarm_fold_towel_rtc_lora_bs8.json
+│   ├── dualarm_fold_towel_rtc_lora_bs8.json
+│   └── dualarm_fold_towel_no_rtc_full.json
 ├── train.sh                           # 公共入口：JSON → 单进程或 torchrun
 ├── train_dualarm_fold_towel_rtc.sh     # LoRA / GPU 4 快捷入口
-├── train_dualarm_fold_towel_rtc_full.sh # 全量 / GPU 6,7 快捷入口
+├── train_dualarm_fold_towel_rtc_frozen_vision.sh # RTC，冻结视觉编码器 / GPU 6,7
+├── train_dualarm_fold_towel_rtc_unfrozen_vision.sh # RTC，全部参数训练 / GPU 6,7
+├── train_dualarm_fold_towel_rtc_full.sh # rtc_full，全部参数训练 / GPU 0,1,2,3
 ├── train_dualarm_fold_towel_rtc_lora_bs8.sh # LoRA batch 8 / GPU 7
+├── train_dualarm_fold_towel_no_rtc_full.sh # 无 RTC 全量 / GPU 7,6,5,4
 ├── setup_server.sh                    # 服务器新建环境
 └── server-constraints.txt
 ```
 
-## 现有三组配置
+## 现有配置
 
-配置按 [实验记录](../../../../../examples/flexiv/docs/EXPERIMENT_LOG.md) 中保存的 E1/E2/E3 `train_config.json` 提取。它们用于**新训练**，不包含旧训练的恢复状态。
+E1/E2/E3 配置按 [实验记录](../../../../../examples/flexiv/docs/EXPERIMENT_LOG.md) 中保存的 `train_config.json` 提取，另提供 RTC 不冻结视觉编码器和四卡无 RTC 全量训练配置。它们用于**新训练**，不包含旧训练的恢复状态。
 
 | 模板                                   | 对应设置                               | 每卡 batch / 全局 batch | 学习率 | 默认 GPU（快捷脚本） |
 | -------------------------------------- | -------------------------------------- | ----------------------- | ------ | -------------------- |
 | `dualarm_fold_towel_rtc_lora.json`     | E1，动作专家和投影 LoRA，rank/alpha 32 | 16 / 16                 | `1e-4` | `4`                  |
-| `dualarm_fold_towel_rtc_full.json`     | E2，冻结视觉编码器，其余全量微调       | 8 / 16                  | `1e-5` | `6,7`                |
+| `dualarm_fold_towel_rtc_frozen_vision.json` | E2 的冻结方式：冻结视觉编码器，其余参数训练，无 LoRA | 8 / 16 | `1e-5` | `6,7` |
+| `dualarm_fold_towel_rtc_unfrozen_vision.json` | RTC，视觉编码器、VLM 和动作专家全部训练，无 LoRA | 8 / 16 | `1e-5` | `6,7` |
+| `dualarm_fold_towel_rtc_full.json` | 本次 `rtc_full`，视觉编码器、VLM 和动作专家全部训练，无 LoRA | 8 / 32 | `1e-5` | `0,1,2,3` |
 | `dualarm_fold_towel_rtc_lora_bs8.json` | E3，同 E1，batch 8                     | 8 / 8                   | `1e-4` | `7`                  |
+| `dualarm_fold_towel_no_rtc_full.json` | 无 RTC，全模型训练，包含视觉编码器     | 8 / 32                  | `1e-5` | `7,6,5,4`            |
 
-共同参数：BF16、梯度检查点、50,000 step、每 2,500 step 保存、每 1,000 step 验证最多 256 个样本。动作是关节相对当前观测、夹爪绝对值，chunk 50，training RTC 最大已知前缀 8。
+共同参数：BF16、梯度检查点、50,000 step、每 2,500 step 保存、每 1,000 step 验证最多 256 个样本。动作是关节相对当前观测、夹爪绝对值，chunk 50。所有 RTC 配置的 `policy.rtc_training_max_delay=8`；四卡无 RTC 配置设为 `policy.rtc_config=null`、`policy.rtc_training_max_delay=0`，关闭 LoRA 并训练全部模型参数。
+
+RTC 的两组非 LoRA 配置通过 `policy.freeze_vision_encoder` 区分：`frozen_vision=true`，`unfrozen_vision=false`；两组的 `train_expert_only=false`、`use_peft=false`、`peft=null`。除冻结开关、实验名和输出目录外，两份 JSON 完全相同，以便比较。它们均从 `pi05_base` 开始，分别保存到 `/mnt/work/dakun/outputs/DualArm_FoldTowel_pi05_rtc_frozen_vision` 和 `/mnt/work/dakun/outputs/DualArm_FoldTowel_pi05_rtc_unfrozen_vision`，可通过 `OUTPUT_DIR` 覆盖。
+
+原来冻结视觉编码器的 RTC 实验使用明确命名的 `rtc_frozen_vision` 入口；旧检查点和实验目录保留原名，续训仍读取其 `train_config.json`。`rtc_frozen_vision` 和 `rtc_unfrozen_vision` 两卡入口默认使用 GPU `6,7`，可用 `CUDA_VISIBLE_DEVICES` 覆盖；冻结版默认端口 `29517`，不冻结版默认 `29519`，均可通过 `MASTER_PORT` 覆盖。
+
+按本次实验命名，`train_dualarm_fold_towel_rtc_full.sh` 和 `dualarm_fold_towel_rtc_full.json` 现在用于 **GPU 0,1,2,3、不冻结视觉编码器** 的 RTC 全模型训练：`job_name=rtc_full`，输出 `/mnt/work/dakun/outputs/rtc_full`，每卡 batch 8、全局 batch 32，默认端口 `29519`。从 `pi05_base` 开始训练 50,000 step，RTC delay 8，数据划分和学习率沿用上述 RTC 对照配置。
+
+四卡无 RTC 配置固定使用物理 GPU `7,6,5,4`，每卡 batch 8、梯度累积 1，全局 batch 32；默认端口为 `29518`。输出目录为 `/mnt/work/dakun/outputs/DualArm_FoldTowel_pi05_no_rtc_full_gpu7_6_5_4`，可用 `OUTPUT_DIR` 指定另一次实验的目录。快捷脚本兼容 `BATCH_SIZE` 和 `TRAIN_STEPS` 环境变量；显式命令行参数优先。
 
 数据为 `local/DualArm_FoldTowel_joint_rtc`，123 个 episode。`dataset.eval_split=0.08536585365853659` 与原转换清单按最后 10% 源 scene 留出验证集的结果一致：112 个训练 episode、11 个验证 episode。这是该数据集的固定划分；更换数据后应一起检查 `repo_id`、`root`、`eval_split` 和 `eval_steps`。
 
@@ -37,16 +54,35 @@ training/
 ```bash
 pi05_training=src/lerobot/policies/pi05/training
 bash "$pi05_training/train_dualarm_fold_towel_rtc.sh" --print-command
+bash "$pi05_training/train_dualarm_fold_towel_rtc_frozen_vision.sh" --print-command
+bash "$pi05_training/train_dualarm_fold_towel_rtc_unfrozen_vision.sh" --print-command
 bash "$pi05_training/train_dualarm_fold_towel_rtc_full.sh" --print-command
 bash "$pi05_training/train_dualarm_fold_towel_rtc_lora_bs8.sh" --print-command
+bash "$pi05_training/train_dualarm_fold_towel_no_rtc_full.sh" --print-command
 ```
+
+四卡无 RTC 训练启动后，可在另一个终端监控训练 loss：
+
+```bash
+python src/lerobot/policies/pi05/training/monitor_loss.py
+```
+
+脚本自动找到对应的 rank 0 进程，每 30 秒读取进度和一个 batch 的训练 loss，持续保存到当前输出目录的 `train_loss_monitor.csv`。重启监控会继续保留已有记录。采样值是 rank 0 的单 batch loss，与终端输出的多卡训练窗口均值分别显示。验证 loss 另外保存在 `eval_loss_monitor.csv`，关闭验证仍会继续采集训练 loss。`Ctrl+C` 只停止监控，不影响训练。使用 `--once` 可只查看一次；`--interval=60` 可调整采样间隔。
+
+需要浏览器实时曲线和完整训练配置时运行：
+
+```bash
+python src/lerobot/policies/pi05/training/monitor_loss.py --serve
+```
+
+然后打开 `http://127.0.0.1:8766/`。页面默认显示当前训练的训练 loss，可切换查看验证历史。训练/验证条数根据数据集元数据和运行中的实际参数显示，包含命令行覆盖参数。远程 VS Code 连接服务器时，转发端口 `8766` 后在本机浏览器打开同一地址。网页每 5 秒读取状态，监控进程每 30 秒采样并保存训练数据。横轴从 0 显示到当前训练步；之前未记录的区间以灰色标明，不补造数据或跨缺口连线。要保存从开始起的采样历史，应在训练启动后同时运行监控。
 
 也可以直接选择任意实验配置：
 
 ```bash
 CUDA_VISIBLE_DEVICES=6,7 \
 bash src/lerobot/policies/pi05/training/train.sh \
-  src/lerobot/policies/pi05/training/configs/dualarm_fold_towel_rtc_full.json \
+  src/lerobot/policies/pi05/training/configs/dualarm_fold_towel_rtc_frozen_vision.json \
   --print-command
 ```
 

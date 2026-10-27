@@ -18,7 +18,8 @@
     ],
     "chunk_size": 50,
     "rtc_training_max_delay": 8,
-    "freeze_vision_encoder": true,
+    "use_peft": false,
+    "freeze_vision_encoder": false,
     "train_expert_only": false,
     "gradient_checkpointing": true,
     "optimizer_lr": 1e-05,
@@ -26,8 +27,8 @@
     "scheduler_warmup_steps": 1000,
     "scheduler_decay_steps": 50000
   },
-  "output_dir": null,
-  "job_name": "DualArm_FoldTowel_pi05_rtc_full_gpu5_6",
+  "output_dir": "/mnt/work/dakun/outputs/rtc_full",
+  "job_name": "rtc_full",
   "seed": 1000,
   "batch_size": 8,
   "num_workers": 4,
@@ -38,7 +39,8 @@
   "eval_steps": 1000,
   "max_eval_samples": 256,
   "parallelism": {
-    "dp_replicate": 2
+    "dp_replicate": 4,
+    "dp_shard": 1
   },
   "accelerator": {
     "mixed_precision": "bf16",
