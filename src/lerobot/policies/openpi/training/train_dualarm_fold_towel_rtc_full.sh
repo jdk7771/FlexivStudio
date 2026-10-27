@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+task_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+task_root="$(cd -- "$task_dir/.." && pwd)"
+task_python="${OPENPI_PYTHON:-$task_root/.venv/bin/python}"
+task_config="${OPENPI_CONFIG:-$task_dir/configs/dualarm_fold_towel_rtc_full.json}"
+task_print=false
+task_check=false
+task_args=()
+while (( $# )); do
+    case "$1" in
+        --print-command) task_print=true; shift ;;
+        --check-data) task_check=true; shift ;;
+        --resume)
+            [[ $# -ge 2 ]] || { echo '--resume requires a checkpoint directory' >&2; exit 2; }
+            task_config="$2/train_config.json"
+            task_args+=(--resume "$2")
+            shift 2 ;;
+        -h|--help)
+            echo 'Usage: bash train_dualarm_fold_towel_rtc_full.sh [--print-command | --check-data] [--resume CHECKPOINT_DIR]'
+            echo 'Defaults: physical GPU 0,1,2,3; port 29520. OPENPI_CONFIG selects another JSON.'
+            exit 0 ;;
+        *) echo "Unknown option: $1" >&2; exit 2 ;;
+    esac
+done
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
+export MASTER_PORT="${MASTER_PORT:-29520}"
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
+export TOKENIZERS_PARALLELISM=false
+export JAX_PLATFORMS=cpu
+export HF_HUB_OFFLINE=1
+export HF_DATASETS_OFFLINE=1
+export PYTHONPATH="$task_root/src:$task_dir"
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+if "$task_check"; then
+    export CUDA_VISIBLE_DEVICES=""
+    task_command=("$task_python" "$task_dir/train.py" --config "$task_config" --check-data)
+else
+    IFS=, read -r -a task_devices <<< "$CUDA_VISIBLE_DEVICES"
+    [[ ${#task_devices[@]} == 4 ]] || { echo 'Exactly four visible GPUs are required.' >&2; exit 2; }
+    task_command=("$task_python" -m torch.distributed.run --nnodes=1 --nproc-per-node=4
+        "--master-port=$MASTER_PORT" "$task_dir/train.py" --config "$task_config" "${task_args[@]}")
+fi
+if "$task_print"; then
+    printf 'CUDA_VISIBLE_DEVICES=%q JAX_PLATFORMS=cpu ' "$CUDA_VISIBLE_DEVICES"
+    printf '%q ' "${task_command[@]}"
+    printf '\n'
+    exit 0
+fi
+[[ -x "$task_python" ]] || { echo "Run $task_dir/setup.sh first." >&2; exit 1; }
+# The shared base environment provides torchcodec/CUDA/FFmpeg; only the overlay gets patched transformers.
+task_base="$($task_python -c 'import sys; print(sys.base_prefix)')"
+task_libs="$($task_python - <<'PY'
+import pathlib, site
+paths = []
+for base in site.getsitepackages():
+    paths.extend(str(p) for p in pathlib.Path(base).glob('nvidia/*/lib'))
+print(':'.join(paths))
+PY
+)"
+export LD_LIBRARY_PATH="$task_base/lib:$task_libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+cd "$task_root"
+exec "${task_command[@]}"

@@ -1,0 +1,21 @@
+{
+  "python": "3.12.15 (main, Oct 13 2026, 16:52:04) [GCC 15.3.0]",
+  "packages": {
+    "torch": "2.7.1+cu118",
+    "torchvision": "0.22.1+cu118",
+    "torchcodec": "0.5+cu118",
+    "transformers": "4.53.2",
+    "accelerate": "1.10.1",
+    "lerobot": "0.4.4",
+    "numpy": "2.2.6",
+    "jax": "0.5.3",
+    "flax": "0.10.2",
+    "huggingface_hub": "0.36.2",
+    "datasets": "4.8.5",
+    "pyarrow": "26.0.0",
+    "safetensors": "0.8.0",
+    "imageio": "2.37.2"
+  },
+  "base_prefix": "/mnt/work/dakun/conda-envs/lerobot",
+  "venv": "/mnt/work/dakun/lerobot/src/lerobot/policies/openpi/.venv"
+}

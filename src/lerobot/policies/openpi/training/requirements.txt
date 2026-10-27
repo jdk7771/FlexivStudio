@@ -1,0 +1,11 @@
+# Overlay on the existing torch 2.7.1 + torchcodec + LeRobot v3 environment.
+# CPU JAX is only needed for imports in the official PyTorch model.
+transformers==4.53.2
+jax==0.5.3
+flax==0.10.2
+# Match the installed v3 dataset reader's PyArrow ABI.
+numpy==2.2.6
+jaxtyping==0.2.36
+beartype==0.19.0
+imageio==2.37.2
+pytest>=8,<9

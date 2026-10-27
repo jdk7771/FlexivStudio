@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PI0.5 Training Monitor</title>
+  <style>
+    :root{color-scheme:light;--ink:#202124;--muted:#666b70;--line:#d7d9dc;--red:#b83a2e;--amber:#b77900}
+    *{box-sizing:border-box}body{margin:0;background:#fff;color:var(--ink);font:14px/1.45 system-ui,sans-serif}
+    header{border-bottom:1px solid var(--line);padding:20px 28px 16px}.header-row,.controls,.section-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+    h1{margin:0;font-size:22px}h2{margin:0;font-size:16px}.muted,#subtitle{color:var(--muted);font-size:12px}#subtitle{margin-top:6px}
+    label{color:var(--muted);font-size:12px}select,button{height:36px;padding:0 10px;border:1px solid var(--line);border-radius:5px;background:#fff;color:var(--ink)}
+    #job-select{max-width:50vw}button{font-size:22px;cursor:pointer}button:disabled{opacity:.5;cursor:wait}
+    main{max-width:1280px;margin:0 auto;padding:22px 28px 36px}.metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));border:1px solid var(--line);border-radius:6px}
+    .metric{padding:16px 18px;border-right:1px solid var(--line)}.metric:last-child{border:0}.label{font-size:12px;color:var(--muted)}.value{margin-top:7px;font-size:21px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+    .chart-section{margin-top:22px;border-block:1px solid var(--line);padding:20px 0 16px}.section-head{margin-bottom:12px}.chart-wrap{position:relative;height:390px}canvas{display:block;width:100%;height:100%}
+    #tooltip{position:absolute;pointer-events:none;display:none;background:#202124;color:white;padding:7px 10px;border-radius:4px;font-size:12px;white-space:pre-line}
+    .legend{display:flex;gap:20px;flex-wrap:wrap;font-size:12px;margin:8px 0;color:var(--muted)}.key::before{content:'';display:inline-block;width:16px;height:3px;margin:0 6px 3px 0;background:var(--red)}.key.live::before{background:var(--amber)}.key.missing::before{height:10px;margin-bottom:0;background:#eceeef}
+    #history-note{font-size:12px;color:var(--muted);line-height:1.7}.config-band{padding-top:22px}.config-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px}.config-group{border-top:2px solid var(--ink);padding-top:8px}.config-group h3{font-size:13px;margin:0 0 7px}dl{margin:0}.row{display:grid;grid-template-columns:1fr 1.3fr;gap:10px;border-top:1px solid #eceeef;padding:7px 0}dt{color:var(--muted)}dd{margin:0;text-align:right;overflow-wrap:anywhere;font:12px ui-monospace,monospace}
+    #error{display:none;margin-top:16px;padding:10px;background:#fff5f3;color:#7d251d;border-left:3px solid var(--red)}
+    @media(max-width:850px){main,header{padding-inline:16px}.header-row{align-items:stretch;flex-direction:column}.controls{flex-wrap:wrap}#job-select{max-width:80vw;width:100%}.metrics{grid-template-columns:repeat(2,1fr)}.metric{border-bottom:1px solid var(--line)}.config-grid{grid-template-columns:1fr}.chart-wrap{height:320px}.section-head{align-items:start;flex-wrap:wrap}}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-row"><h1 id="title">PI0.5 Training Monitor</h1><div class="controls"><label for="job-select">训练任务</label><select id="job-select"></select><button id="refresh-button" type="button" title="立即刷新" aria-label="立即刷新">↻</button></div></div>
+    <div id="subtitle">正在读取训练状态…</div>
+  </header>
+  <main>
+    <section class="metrics">
+      <div class="metric"><div class="label">状态</div><div class="value" id="status">等待</div></div>
+      <div class="metric"><div class="label">训练进度</div><div class="value" id="step">--</div></div>
+      <div class="metric"><div class="label" id="loss-label">最近训练 Loss</div><div class="value" id="loss">--</div></div>
+      <div class="metric"><div class="label">完成比例</div><div class="value" id="progress">--</div></div>
+      <div class="metric"><div class="label">预计剩余</div><div class="value" id="eta">--</div></div>
+    </section>
+    <div id="error" role="status"></div>
+    <section class="chart-section">
+      <div class="section-head"><h2 id="chart-title">训练 Loss 曲线</h2><div class="controls"><label for="loss-kind">曲线</label><select id="loss-kind"><option value="train">训练 Loss</option><option value="eval">验证 Loss（历史）</option></select><span id="chart-note" class="muted"></span></div></div>
+      <div class="chart-wrap"><canvas id="chart"></canvas><div id="tooltip"></div></div>
+      <div class="legend" id="legend"></div>
+      <div id="history-note"></div>
+    </section>
+    <section class="config-band">
+      <div class="section-head"><h2>当前训练配置</h2><span class="muted" id="updated"></span></div>
+      <div class="config-grid" id="config"></div>
+    </section>
+  </main>
+<script>
+const $ = id => document.getElementById(id);
+let points = [], selectedOutput = null, state = {}, busy = false, queued = false, plotted = [];
+const text = value => value === null || value === undefined || value === '' ? '--' : String(value);
+const escape = value => text(value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+const number = value => Number(value).toLocaleString('en-US');
+function group(title, rows) {
+  return `<section class="config-group"><h3>${escape(title)}</h3><dl>${rows.map(([k,v]) => `<div class="row"><dt>${escape(k)}</dt><dd>${escape(v)}</dd></div>`).join('')}</dl></section>`;
+}
+function renderConfig(s) {
+  const c=s.config||{}, p=c.policy||{}, d=c.dataset||{}, a=c.accelerator||{}, par=c.parallelism||{}, counts=s.dataset_counts||{};
+  const accum=(a.gradient_accumulation||{}).steps||1, world=(par.dp_replicate||1)*(par.dp_shard||1);
+  $('config').innerHTML = group('模型', [['policy',p.type],['base',p.pretrained_path],['dtype',p.dtype],['full fine tune',!p.freeze_vision_encoder&&!p.train_expert_only&&!p.use_peft],['gradient checkpoint',p.gradient_checkpointing],['RTC max delay',p.rtc_training_max_delay]])
+    + group('优化与并行', [['GPU',s.gpus],['每卡 batch',c.batch_size],['全局 batch',(c.batch_size||0)*world*accum],['初始学习率',p.optimizer_lr],['训练步数',c.steps],['保存频率',c.save_freq]])
+    + group('数据与验证', [['dataset',d.repo_id],['训练 / 验证',`${text(counts.train)} / ${text(counts.eval)}`],['eval split',d.eval_split],['eval 频率',c.eval_steps>0?c.eval_steps:'关闭'],['chunk size',p.chunk_size],['输出目录',c.output_dir]]);
+}
+function draw() {
+  const canvas=$('chart'), box=canvas.parentElement.getBoundingClientRect(), dpr=window.devicePixelRatio||1;
+  canvas.width=Math.max(1,Math.floor(box.width*dpr)); canvas.height=Math.max(1,Math.floor(box.height*dpr));
+  const ctx=canvas.getContext('2d'); ctx.scale(dpr,dpr);
+  const w=box.width,h=box.height,L=64,R=22,T=28,B=46,pw=w-L-R,ph=h-T-B;
+  ctx.clearRect(0,0,w,h); ctx.font='12px system-ui'; plotted=[];
+  const xmax=Math.max(1,Number(state.step)||0,...points.map(p=>p.step));
+  let ymin=points.length?Math.min(...points.map(p=>p.loss)):0, ymax=points.length?Math.max(...points.map(p=>p.loss)):1;
+  const pad=Math.max((ymax-ymin)*.08,Math.abs(ymax)*.03,.0001); ymin=Math.max(0,ymin-pad); ymax+=pad;
+  const X=x=>L+x/xmax*pw, Y=y=>T+(ymax-y)/(ymax-ymin)*ph;
+  if ($('loss-kind').value==='train') {
+    ctx.fillStyle='#f0f1f2';
+    for (const gap of state.history_gaps||[]) {
+      const left=X(gap.from), right=X(gap.to); ctx.fillRect(left,T,right-left,ph);
+      if (right-left>65) { ctx.fillStyle='#858a90'; ctx.textAlign='center'; ctx.fillText('历史缺失',(left+right)/2,T+ph/2); ctx.fillStyle='#f0f1f2'; }
+    }
+  }
+  ctx.lineWidth=1; ctx.strokeStyle='#d7d9dc'; ctx.fillStyle='#666b70';
+  for(let i=0;i<=5;i++) {
+    const yy=T+i*ph/5, value=ymax-i*(ymax-ymin)/5;
+    ctx.beginPath();ctx.moveTo(L,yy);ctx.lineTo(w-R,yy);ctx.stroke();ctx.textAlign='right';ctx.fillText(value.toFixed(4),L-9,yy+4);
+    const xx=L+i*pw/5;ctx.textAlign='center';ctx.fillText(number(Math.round(i*xmax/5)),xx,h-B+23);
+  }
+  ctx.strokeStyle='#303236';ctx.beginPath();ctx.moveTo(L,T);ctx.lineTo(L,h-B);ctx.lineTo(w-R,h-B);ctx.stroke();
+  if(!points.length) { ctx.textAlign='center';ctx.fillText($('loss-kind').value==='train'?'尚无训练 loss 记录，等待采样':(Number(state.eval_interval)>0?'等待验证 loss':'当前验证已关闭'),L+pw/2,T+ph/2); }
+  const threshold=Math.max(150,Number((state.config||{}).log_freq||50)*3);
+  const series=$('loss-kind').value==='train' ? [
+    {color:'#b83a2e',values:points.filter(p=>p.source==='terminal_window_mean')},
+    {color:'#b77900',values:points.filter(p=>p.source!=='terminal_window_mean')}
+  ] : [{color:'#b83a2e',values:points}];
+  for(const seriesItem of series) {
+    ctx.strokeStyle=seriesItem.color;ctx.fillStyle=seriesItem.color;ctx.lineWidth=2;ctx.beginPath();let previous=null;
+    for(const point of seriesItem.values) {
+      const x=X(point.step), y=Y(point.loss);
+      if(previous && ($('loss-kind').value==='eval' || point.step-previous.step<=threshold)) ctx.lineTo(x,y); else ctx.moveTo(x,y);
+      previous=point;plotted.push({...point,x,y});
+    }
+    ctx.stroke();
+    for(const point of seriesItem.values) {ctx.beginPath();ctx.arc(X(point.step),Y(point.loss),2.5,0,Math.PI*2);ctx.fill();}
+  }
+  const checkpoint=String((state.config||{}).checkpoint_path||'').split('/').pop(), resumed=Number(checkpoint);
+  if(resumed>0 && resumed<xmax) {ctx.save();ctx.strokeStyle='#777';ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(X(resumed),T);ctx.lineTo(X(resumed),h-B);ctx.stroke();ctx.restore();ctx.fillStyle='#666b70';ctx.textAlign='left';ctx.fillText(`${number(resumed)} 续训`,X(resumed)+5,T-10);}
+  ctx.fillStyle='#444';ctx.textAlign='center';ctx.fillText('training step',L+pw/2,h-7);
+}
+async function getJSON(path) {
+  const controller=new AbortController(), timeout=setTimeout(()=>controller.abort(),10000);
+  try {const response=await fetch(path,{cache:'no-store',signal:controller.signal});if(!response.ok)throw new Error(await response.text());return await response.json();}
+  finally {clearTimeout(timeout);}
+}
+async function loadJobs() {
+  const allJobs=await getJSON('api/jobs'), select=$('job-select'), previous=selectedOutput||select.value;
+  const jobs=allJobs.filter(job=>job.running||job.output_dir===previous);
+  if(!jobs.length&&allJobs.length)jobs.push(allJobs[0]);
+  select.replaceChildren();
+  for(const job of jobs) {const option=document.createElement('option');option.value=job.output_dir;option.textContent=`${job.running?'[运行中]':'[已停止]'} ${job.job_name}`;select.appendChild(option);}
+  const chosen=jobs.find(job=>job.output_dir===previous)||jobs.find(job=>job.running)||jobs[0];
+  if(!chosen)throw new Error('没有找到训练任务');selectedOutput=chosen.output_dir;select.value=selectedOutput;
+}
+async function refresh() {
+  if(busy){queued=true;return;}busy=true;$('refresh-button').disabled=true;
+  try {
+    await loadJobs();const kind=$('loss-kind').value, requestedOutput=selectedOutput, query=`?output=${encodeURIComponent(requestedOutput)}`;
+    const [s,lossPoints]=await Promise.all([getJSON('api/status'+query),getJSON('api/loss'+query+'&kind='+kind)]);
+    if(requestedOutput!==selectedOutput||kind!==$('loss-kind').value){queued=true;return;}
+    state=s;points=lossPoints;
+    $('title').textContent=s.job_name||'PI0.5 Training Monitor';$('subtitle').textContent=`采样于 ${s.updated_at||'--'} · rank 0 PID ${s.pid||'--'}`;
+    $('status').textContent=s.running?'训练中':'已停止';$('status').style.color=s.running?'#247a4d':'#9a6700';
+    $('step').textContent=`${number(s.step||0)} / ${number(s.total_steps||0)}`;
+    $('loss-label').textContent=kind==='train'?'最近训练 Loss':'最近验证 Loss';
+    const loss=kind==='train'?s.train_loss:s.eval_loss;
+    $('loss').textContent=kind==='eval'&&Number(s.eval_interval)===0?'验证已关闭':(loss==null?'等待记录':Number(loss).toFixed(6));
+    $('progress').textContent=s.progress==null?'--':`${Number(s.progress).toFixed(1)}%`;$('eta').textContent=s.eta||'--';
+    $('updated').textContent=`每 ${s.interval||30} 秒采样 · 页面每 5 秒刷新`;
+    $('chart-title').textContent=kind==='train'?'训练 Loss 曲线':'验证 Loss 曲线';$('chart-note').textContent=`已保存 ${points.length} 个点`;
+    if(kind==='train') {
+      const history=points.filter(p=>p.source==='terminal_window_mean').length, live=points.length-history;
+      $('legend').innerHTML='<span class="key">历史训练窗口均值</span><span class="key live">实时 batch loss（rank 0）</span><span class="key missing">历史缺失</span>';
+      const gaps=s.history_gaps||[];
+      $('history-note').textContent=`恢复 ${history} 个终端历史点，新增 ${live} 个实时采样点。历史窗口均值与实时单 batch loss 分别显示。`+(gaps.length?'灰色区间没有已保存的训练 loss，无法还原完整历史；曲线不跨过缺失区间连线。':'横轴从 0 显示到当前训练步。');
+    } else {
+      $('legend').innerHTML='<span class="key">验证 loss</span>';
+      $('history-note').textContent=Number(s.eval_interval)>0?`每 ${s.eval_interval} step 验证一次。`:'本次续训关闭验证，此处仅保留恢复前的历史验证点。';
+    }
+    renderConfig(s);$('error').style.display='none';
+    if(s.updated_at&&s.running&&Date.now()-Date.parse(s.updated_at)>Math.max(90,(s.interval||30)*3)*1000) {$('error').textContent='采样数据暂未更新，显示上次记录；训练进程仍在。';$('error').style.display='block';}
+    draw();
+  }catch(error){$('error').textContent=`读取监控失败：${error.message}`;$('error').style.display='block';}
+  finally{busy=false;$('refresh-button').disabled=false;if(queued){queued=false;refresh();}}
+}
+$('job-select').addEventListener('change',event=>{selectedOutput=event.target.value;refresh();});
+$('loss-kind').addEventListener('change',refresh);$('refresh-button').addEventListener('click',refresh);window.addEventListener('resize',draw);
+$('chart').addEventListener('mousemove',event=>{
+  const box=$('chart').getBoundingClientRect(), x=event.clientX-box.left, y=event.clientY-box.top, tooltip=$('tooltip');
+  const nearest=plotted.reduce((best,p)=>!best||Math.hypot(p.x-x,p.y-y)<Math.hypot(best.x-x,best.y-y)?p:best,null);
+  if(!nearest||Math.abs(nearest.x-x)>35){tooltip.style.display='none';return;}
+  const source=nearest.source==='terminal_window_mean'?'训练窗口均值':(nearest.source==='rank0_batch_sample'?'单 batch 采样（rank 0）':'验证 loss');
+  tooltip.textContent=`step ${number(nearest.step)} · loss ${Number(nearest.loss).toFixed(6)}\n${source}`;
+  tooltip.style.left=Math.min(x+12,Math.max(0,box.width-220))+'px';tooltip.style.top=Math.max(0,y-58)+'px';tooltip.style.display='block';
+});
+$('chart').addEventListener('mouseleave',()=>{$('tooltip').style.display='none';});
+refresh();setInterval(refresh,5000);
+</script>
+</body>
+</html>
