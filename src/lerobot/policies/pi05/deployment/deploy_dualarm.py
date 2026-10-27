@@ -8,13 +8,13 @@ from an offline observation and never imports either hardware SDK.
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import os
 import time
 from pathlib import Path
 from typing import Any
 
+from deployment_recording import DeploymentLog, add_recording_arguments, configure_recording
 from flexiv_deploy_contract import ACTION_NAMES, CAMERA_NAMES, inspect_checkpoint, read_json
 
 LOGGER = logging.getLogger(__name__)
@@ -369,9 +369,9 @@ def execute(
     robot = FlexivDualArm(cfg["hardware"], start_pose=cfg["start_pose"])
     engine = None
     initial, source = start_pose
-    telemetry = Path(cfg["telemetry"])
-    telemetry.parent.mkdir(parents=True, exist_ok=True)
+    log = None
     try:
+        log = DeploymentLog(cfg, run_mode, rtc=True)
         # Engine construction deep-copies processors/tokenizers. Finish that work
         # before camera reader threads and robot control are active.
         engine_init_start = time.monotonic()
@@ -411,103 +411,104 @@ def execute(
             engine.resume()
         started = deadline = time.monotonic()
         last_report = started
-        with telemetry.open("a", encoding="utf-8", buffering=1) as log:
-            if run_mode == "step":
-                step = 0
-                while True:
-                    answer = input(f"单步 {step + 1}：按 Enter 执行一个动作，输入 q 退出：").strip().lower()
-                    if answer in {"q", "quit"}:
-                        break
-                    if answer:
-                        LOGGER.info("Only Enter dispatches one step; no action sent")
-                        continue
-                    obs, target, capture_time = dispatch_single_step(engine, robot, cfg)
-                    camera_age_s = time.monotonic() - capture_time
-                    robot.wait_for_target(target, cfg["action_timeout_s"])
-                    step += 1
-                    log.write(
-                        json.dumps(
-                            {
-                                "wall_time": time.time(),
-                                "mode": "step",
-                                "step": step,
-                                "start_scene": source["scene"],
-                                "state": [float(obs[name]) for name in ACTION_NAMES],
-                                "applied_absolute_action": np.asarray(target).tolist(),
-                                "camera_age_s": camera_age_s,
-                            }
-                        )
-                        + "\n"
-                    )
-                    LOGGER.info("Step %d reached target; RTC queue cleared", step)
-                return
-            while time.monotonic() - started < cfg["duration_s"]:
-                tick_start = time.monotonic()
-                if engine.failed:
-                    raise RuntimeError(engine.failure_traceback)
-                obs = robot.get_observation()
-                capture_done = time.monotonic()
-                engine.notify_observation(obs)
-                target = None
-                if engine.dispatch_allowed():
-                    action = engine.get_action(None)
-                    # get_action() itself may revoke dispatch when the buffer runs out.
-                    if action is not None and engine.dispatch_allowed():
-                        target = robot.send_action(action.detach().float().cpu().numpy()[:16])
-                    else:
-                        robot.hold()
+        if run_mode == "step":
+            step = 0
+            while True:
+                answer = input(f"单步 {step + 1}：按 Enter 执行一个动作，输入 q 退出：").strip().lower()
+                if answer in {"q", "quit"}:
+                    break
+                if answer:
+                    LOGGER.info("Only Enter dispatches one step; no action sent")
+                    continue
+                obs, target, capture_time = dispatch_single_step(engine, robot, cfg)
+                camera_age_s = time.monotonic() - capture_time
+                robot.wait_for_target(target, cfg["action_timeout_s"])
+                step += 1
+                log.record(
+                    {
+                        "wall_time": time.time(),
+                        "mode": "step",
+                        "step": step,
+                        "start_scene": source["scene"],
+                        "state": [float(obs[name]) for name in ACTION_NAMES],
+                        "applied_absolute_action": np.asarray(target).tolist(),
+                        "camera_age_s": camera_age_s,
+                    },
+                    obs,
+                    capture_time,
+                )
+                LOGGER.info("Step %d reached target; RTC queue cleared", step)
+            return
+        while time.monotonic() - started < cfg["duration_s"]:
+            tick_start = time.monotonic()
+            if engine.failed:
+                raise RuntimeError(engine.failure_traceback)
+            obs = robot.get_observation()
+            capture_done = time.monotonic()
+            engine.notify_observation(obs)
+            target = None
+            if engine.dispatch_allowed():
+                action = engine.get_action(None)
+                # get_action() itself may revoke dispatch when the buffer runs out.
+                if action is not None and engine.dispatch_allowed():
+                    target = robot.send_action(action.detach().float().cpu().numpy()[:16])
                 else:
                     robot.hold()
-                    engine.acknowledge_hold()
-                if engine.failed:
-                    raise RuntimeError(engine.failure_traceback)
-                ended = time.monotonic()
-                log.write(
-                    json.dumps(
-                        {
-                            "wall_time": time.time(),
-                            "mode": "continuous",
-                            "start_scene": source["scene"],
-                            "elapsed_s": ended - started,
-                            "state": [float(obs[name]) for name in ACTION_NAMES],
-                            "applied_absolute_action": None
-                            if target is None
-                            else np.asarray(target).tolist(),
-                            "camera_age_s": capture_done - robot.observation_time,
-                            "camera_ages_s": robot.camera_ages_s.copy(),
-                            "observation_ms": (capture_done - tick_start) * 1000,
-                            "command_ms": (ended - capture_done) * 1000,
-                            "queue_size": engine.action_queue.qsize(),
-                        }
-                    )
-                    + "\n"
+            else:
+                robot.hold()
+                engine.acknowledge_hold()
+            if engine.failed:
+                raise RuntimeError(engine.failure_traceback)
+            ended = time.monotonic()
+            log.record(
+                {
+                    "wall_time": time.time(),
+                    "mode": "continuous",
+                    "start_scene": source["scene"],
+                    "elapsed_s": ended - started,
+                    "state": [float(obs[name]) for name in ACTION_NAMES],
+                    "applied_absolute_action": None if target is None else np.asarray(target).tolist(),
+                    "camera_age_s": capture_done - robot.observation_time,
+                    "camera_ages_s": robot.camera_ages_s.copy(),
+                    "observation_ms": (capture_done - tick_start) * 1000,
+                    "command_ms": (ended - capture_done) * 1000,
+                    "queue_size": engine.action_queue.qsize(),
+                },
+                obs,
+                robot.observation_time,
+            )
+            if ended - last_report >= 5:
+                LOGGER.info(
+                    "elapsed=%.1fs queue=%d tick=%.1fms",
+                    ended - started,
+                    engine.action_queue.qsize(),
+                    (ended - tick_start) * 1000,
                 )
-                if ended - last_report >= 5:
-                    LOGGER.info(
-                        "elapsed=%.1fs queue=%d tick=%.1fms",
-                        ended - started,
-                        engine.action_queue.qsize(),
-                        (ended - tick_start) * 1000,
-                    )
-                    last_report = ended
-                deadline += 1 / cfg["fps"]
-                remaining = deadline - time.monotonic()
-                if remaining > 0:
-                    time.sleep(remaining)
-                else:
-                    # Never accelerate queued actions to catch up after a late control tick.
-                    deadline = time.monotonic() + 1 / cfg["fps"]
-                    LOGGER.warning("Control tick missed 15 Hz budget by %.1f ms", -remaining * 1000)
-                    time.sleep(1 / cfg["fps"])
+                last_report = ended
+            deadline += 1 / cfg["fps"]
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(remaining)
+            else:
+                # Never accelerate queued actions to catch up after a late control tick.
+                deadline = time.monotonic() + 1 / cfg["fps"]
+                LOGGER.warning("Control tick missed 15 Hz budget by %.1f ms", -remaining * 1000)
+                time.sleep(1 / cfg["fps"])
     finally:
         # Stop robot motion before joining a potentially busy GPU worker.
         try:
             if engine is not None:
                 engine.pause()
         finally:
-            robot.close()
-            if engine is not None:
-                engine.stop()
+            try:
+                robot.close()
+            finally:
+                try:
+                    if engine is not None:
+                        engine.stop()
+                finally:
+                    if log is not None:
+                        log.close()
 
 
 def main() -> None:
@@ -523,6 +524,7 @@ def main() -> None:
     mode.add_argument("--check", action="store_true", help="Check local files only")
     mode.add_argument("--predict-npz", type=Path, help="Predict from an offline NPZ; never connect hardware")
     parser.add_argument("--output", type=Path, help="New .npy path required with --predict-npz")
+    add_recording_arguments(parser)
     args = parser.parse_args()
     if args.predict_npz is not None and args.output is None:
         parser.error("--predict-npz requires --output")
@@ -541,6 +543,7 @@ def main() -> None:
         if args.run_mode is None:
             LOGGER.info("Deployment cancelled before loading the model or connecting devices")
             return
+    configure_recording(cfg, args)
     if execute_mode:
         require_compatible_rdk()
     for name in ("checkpoint", "base_model", "tokenizer"):

@@ -739,6 +739,31 @@ class TestExecutionInitialization(unittest.TestCase):
             self._run()
         self._assert_cancelled_at_home()
 
+    def test_recorder_starts_before_devices_and_drains_after_stop_even_on_cleanup_error(self) -> None:
+        order: list[str] = []
+        writer = MagicMock()
+        writer.close.side_effect = lambda: order.append("drain")
+        self.robot.connect.side_effect = lambda: order.append("connect")
+
+        def close_robot() -> None:
+            order.append("stop_robot")
+            raise RuntimeError("cleanup failed")
+
+        self.robot.close.side_effect = close_robot
+        self.engine.stop.side_effect = lambda: order.append("stop_engine")
+
+        def create_writer(*args: object, **kwargs: object) -> MagicMock:
+            order.append("start_writer")
+            return writer
+
+        with (
+            patch("deploy_dualarm.DeploymentLog", side_effect=create_writer),
+            patch("builtins.input", return_value=""),
+            self.assertRaisesRegex(RuntimeError, "cleanup failed"),
+        ):
+            self._run()
+        self.assertEqual(order, ["start_writer", "connect", "stop_robot", "stop_engine", "drain"])
+
     def test_eof_at_home_cancels_before_policy_start(self) -> None:
         with patch("builtins.input", side_effect=EOFError):
             self._run()

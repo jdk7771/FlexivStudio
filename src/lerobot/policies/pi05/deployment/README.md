@@ -95,6 +95,36 @@ bash src/lerobot/policies/pi05/deployment/run_no_rtc.sh 025000 --n-action-steps 
 
 两套入口均可用 `--config /绝对路径/配置.json` 指定设备配置。观测首帧仍从本机 `/home/nematrix/snap/reports/dual_arm_fold_towel_2026-10-23/conversion_manifest.json` 与其指向的采集 HDF5 读取；默认日志分别写入 `/home/nematrix/snap/deployment_logs/DualArm_FoldTowel_rtc_full.jsonl` 和 `/home/nematrix/snap/deployment_logs/DualArm_FoldTowel_no_rtc_full.jsonl`。
 
+## 可选记录图像和机械臂数据
+
+两个部署入口均支持 `--record`，默认关闭；显式关闭用 `--no-record`。在本目录运行：
+
+```bash
+# RTC 50k，连续运行并记录
+bash run.sh rtc_full 050000 --run-mode continuous --record
+
+# 同一份 RTC 权重关闭 RTC，每批执行 25 步，并记录
+bash run_no_rtc.sh rtc_full 050000 --n-action-steps 25 --run-mode continuous --record
+
+# 指定记录父目录，每次运行自动创建独立子目录
+bash run.sh rtc_full 050000 --record --record-dir /home/nematrix/snap/deployment_logs/recordings
+```
+
+仍然先回 home、等待 Enter，再开始策略和记录。只记录策略运行阶段，包含 RTC 首批动作等待时的观测；不记录加载模型、回 home 或等待按键过程。单步模式每个成功执行并到位的动作保存一条。`--check --record` 不创建记录进程、文件或连接设备。
+
+默认保存到配置中 `telemetry` 同级的 `recordings/<UTC时间>_<rtc或no_rtc>_<随机标识>/`：
+
+- `metadata.json`：实际部署配置、checkpoint 路径、RTC 开关、关节顺序、单位和运行方式。
+- `frames.jsonl`：每条记录的序号、图像路径、相机接收时间、机械臂状态读取时间，以及原 telemetry 数据（双臂共 14 个关节角、2 个夹爪宽度、实际下发的绝对目标、队列长度等）。关节单位 rad，夹爪单位 m；连续模式保持期间目标为 `null`。
+- `images/image/`、`images/image2/`、`images/image3/`：三路 **224×224、补边后的模型输入 RGB**，JPEG quality=90；不是 1280×720 原始视频，也不包含深度图。
+- `summary.json`：提交/写入数量、丢弃数量、未写完数量、写盘错误，以及主线程提交记录的平均/最大耗时。
+
+图像使用固定 8 个共享内存槽（约 3.45 MiB）。独立低优先级进程负责 JPEG 编码、JSON 序列化和写盘，不加载模型、不使用 CUDA、不另开相机；控制循环只复制现成的小图并非阻塞入队。缓存满时丢弃整条记录（图像与状态一起丢弃），序号保留缺口；写盘失败仅停止记录，部署继续，终端和汇总会提示。启用记录时原 telemetry 文件也由后台进程写入，因此溢出时同样会缺少对应行；关闭记录保持原 telemetry 行为。
+
+记录的是每个控制周期读取的观测与该周期下发的目标。RTC 异步推理可能使用更早观测，不能把同一行图像直接当成该动作的推理源图像；这里的时间戳是主机接收/读取时间，不是硬件严格同步时间。非 RTC 推理后的相机复查不会覆盖这一条记录的原始观测时间。
+
+正常结束、异常或 Ctrl+C 时先停止机械臂和推理，再限时排空写盘队列；强制杀进程/断电可能留下部分图像或缺少汇总。记录过程不会等待磁盘，但图像复制、进程调度和系统 I/O 仍有开销，不能保证严格零性能影响；使用 `summary.json` 的提交耗时和部署控制周期日志评估实际机器负载。需要完整不丢帧的高清采集时，应单独规划采集带宽。
+
 ## goHome 先抬升再回位
 
 本目录的 `goHome.py` 流程为：打开双夹爪 → 两臂分别沿基座/WORLD 的 +Z 抬升 → 在高处移到各自目标正上方并调整姿态 → 固定目标 XY 和姿态下降 → 到位后关闭夹爪。goHome 不调用 `Init()`。

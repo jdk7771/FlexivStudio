@@ -308,3 +308,28 @@ class TestNonRTCInference(unittest.TestCase):
         self._execute()
         self.robot.send_action.assert_not_called()
         self.robot.close.assert_called_once()
+
+    def test_recording_keeps_original_observation_and_drains_after_robot_stop(self) -> None:
+        self.cfg["duration_s"] = 0.3
+        self.prediction_delay = 0.12
+        events: list[str] = []
+        captures: list[tuple[dict, dict, float]] = []
+        writer = MagicMock()
+        writer.record.side_effect = lambda sample, obs, stamp: captures.append((sample, obs, stamp))
+        writer.close.side_effect = lambda: events.append("drain")
+        self.robot.close.side_effect = lambda: events.append("stop_robot")
+
+        def capture() -> dict:
+            now = self.clock[0]
+            self.robot.observation_time = now
+            self.robot.camera_ages_s = {"image": now}
+            return {**self.observation, "_capture_metadata": {"state_read_monotonic_s": now}}
+
+        self.robot.get_observation.side_effect = capture
+        with patch("deploy_dualarm_no_rtc.DeploymentLog", return_value=writer):
+            self._execute()
+        self.assertTrue(captures)
+        for sample, obs, stamp in captures:
+            self.assertEqual(stamp, obs["_capture_metadata"]["state_read_monotonic_s"])
+            self.assertEqual(sample["camera_ages_s"]["image"], stamp)
+        self.assertEqual(events, ["stop_robot", "drain"])

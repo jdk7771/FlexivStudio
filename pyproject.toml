@@ -584,7 +584,11 @@ ignore_missing_imports = true
 follow_imports = "skip"
 # Paths the hook checks as a whole (pass_filenames: false); keep its `files` pattern in sync.
 files = ["src/lerobot", "scripts", "utils", "conftest.py", "setup.py"]
-exclude = ['_pb2(_grpc)?\.py$']
+exclude = [
+    '_pb2(_grpc)?\.py$',
+    # Vendored OpenPI has its own environment/tooling; keep our training wrappers checked.
+    '^src/lerobot/policies/openpi/(src|packages|examples|scripts)/',
+]
 exclude_gitignore = true
 warn_redundant_casts = true
 extra_checks = true

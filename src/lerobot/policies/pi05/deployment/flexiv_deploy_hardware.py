@@ -350,7 +350,14 @@ class FlexivDualArm:
             raise CameraFreshnessError(f"RGB camera timestamps are too far apart; {details}")
         self.observation_time = min(times)
         state = self.read_state()
-        return {**dict(zip(ACTION_NAMES, state, strict=True)), **{k: v[0] for k, v in ready_frames.items()}}
+        return {
+            **dict(zip(ACTION_NAMES, state, strict=True)),
+            **{k: v[0] for k, v in ready_frames.items()},
+            "_capture_metadata": {
+                "camera_received_monotonic_s": {k: v[1] for k, v in ready_frames.items()},
+                "state_read_monotonic_s": time.monotonic(),
+            },
+        }
 
     def wait_for_fresh_observation(self, timeout_s: float) -> dict:
         """Wait at startup for all cameras to publish a new, valid frame; send no actions."""
