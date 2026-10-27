@@ -17,11 +17,12 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import numpy as np
 from deploy_dualarm import (
     align_start_pose,
+    available_checkpoint_folders,
     available_checkpoints,
     choose_checkpoint,
     choose_run_mode,
@@ -40,6 +41,7 @@ from flexiv_deploy_contract import (
 )
 from flexiv_deploy_hardware import CameraFreshnessError, FlexivDualArm, letterbox, pack_state, validate_target
 from goHome import main as go_home_main
+from init_grippers import main as init_grippers_main
 
 
 def write_tensors(path: Path, names: list[str]) -> None:
@@ -147,7 +149,7 @@ class TestContract(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "incomplete"):
             tensor_header(path)
 
-    def test_permuted_joint_order_or_untrained_rtc_is_rejected(self):
+    def test_permuted_joint_order_or_mismatched_trained_rtc_is_rejected(self) -> None:
         self.model["action_feature_names"][0], self.model["action_feature_names"][8] = (
             self.model["action_feature_names"][8],
             self.model["action_feature_names"][0],
@@ -156,10 +158,58 @@ class TestContract(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "order"):
             inspect_checkpoint(self.cfg)
         self.model["action_feature_names"] = ACTION_NAMES.copy()
-        self.model["rtc_training_max_delay"] = 0
+        self.model["rtc_training_max_delay"] = 4
         self._save_model()
         with self.assertRaisesRegex(ValueError, "rtc_training_max_delay"):
             inspect_checkpoint(self.cfg)
+
+    def test_non_rtc_accepts_both_training_types_but_rtc_requires_trained_weights(self) -> None:
+        self.assertEqual(inspect_checkpoint(self.cfg)["kind"], "full")
+        before = (self.root / "config.json").read_bytes()
+        self.assertEqual(inspect_checkpoint(self.cfg, rtc=False)["kind"], "full")
+        self.assertEqual((self.root / "config.json").read_bytes(), before)
+        for name in ("training_max_delay", "rtc_execution_horizon", "rtc_queue_threshold"):
+            no_rtc_cfg = {key: value for key, value in self.cfg.items() if key != name}
+            self.assertEqual(inspect_checkpoint(no_rtc_cfg, rtc=False)["kind"], "full")
+        self.model["rtc_training_max_delay"] = 0
+        self._save_model()
+        self.cfg["inference_mode"] = "chunk"
+        with self.assertRaisesRegex(ValueError, "rtc_training_max_delay"):
+            inspect_checkpoint(self.cfg)
+        self.assertEqual(inspect_checkpoint(self.cfg, rtc=False)["kind"], "full")
+        for name in ("training_max_delay", "rtc_execution_horizon", "rtc_queue_threshold"):
+            del self.cfg[name]
+        self.assertEqual(inspect_checkpoint(self.cfg, rtc=False)["kind"], "full")
+
+    def test_invalid_delay_and_chunk_execution_length_are_rejected(self) -> None:
+        for value in (-1, True, 0.5):
+            with self.subTest(delay=value):
+                self.model["rtc_training_max_delay"] = value
+                self._save_model()
+                with self.assertRaisesRegex(ValueError, "rtc_training_max_delay"):
+                    inspect_checkpoint(self.cfg)
+                with self.assertRaisesRegex(ValueError, "rtc_training_max_delay"):
+                    inspect_checkpoint(self.cfg, rtc=False)
+        self.model["rtc_training_max_delay"] = 0
+        for value in (0, 51, True, 2.5):
+            with self.subTest(execution_steps=value):
+                self.model["n_action_steps"] = value
+                self._save_model()
+                with self.assertRaisesRegex(ValueError, "n_action_steps"):
+                    inspect_checkpoint(self.cfg, rtc=False)
+
+    def test_non_rtc_deployment_execution_steps_must_fit_the_predicted_chunk(self) -> None:
+        self.model["rtc_training_max_delay"] = 0
+        self._save_model()
+        for value in (1, 5, 50):
+            with self.subTest(execution_steps=value):
+                self.cfg["n_action_steps"] = value
+                self.assertEqual(inspect_checkpoint(self.cfg, rtc=False)["kind"], "full")
+        for invalid_steps in (-1, 0, 51, True, 2.5, None):
+            with self.subTest(execution_steps=invalid_steps):
+                self.cfg["n_action_steps"] = invalid_steps
+                with self.assertRaisesRegex(ValueError, "n_action_steps must be an integer between 1 and 50"):
+                    inspect_checkpoint(self.cfg, rtc=False)
 
     def test_invalid_timing_and_duplicate_serials_are_rejected(self):
         for field, value in (("fps", 30), ("rtc_execution_horizon", 7), ("rtc_queue_threshold", 4)):
@@ -201,55 +251,107 @@ class TestContract(unittest.TestCase):
 
 
 class TestCheckpointMenu(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        self.rtc_root = self.root / "rtc_full"
+        self.no_rtc_root = self.root / "DualArm_FoldTowel_pi05_no_rtc_full_gpu7_6_5_4"
         for step in ("030000", "040000", "045000", "050000"):
-            checkpoint = self.root / step / "pretrained_model"
+            checkpoint = self.rtc_root / step / "pretrained_model"
             checkpoint.mkdir(parents=True)
             (checkpoint / "config.json").write_text("{}")
             (checkpoint / "model.safetensors").write_bytes(b"weight")
-        (self.root / "last").symlink_to("050000", target_is_directory=True)
+        (self.rtc_root / "last").symlink_to("050000", target_is_directory=True)
+        checkpoint = self.no_rtc_root / "025000" / "pretrained_model"
+        checkpoint.mkdir(parents=True)
+        (checkpoint / "config.json").write_text("{}")
+        (checkpoint / "model.safetensors").write_bytes(b"weight")
+        (checkpoint / "tokenizer").mkdir()
 
-    def test_lists_rtc_full_checkpoints_newest_first_without_duplicate_last_link(self):
-        choices = available_checkpoints(self.root)
+    def test_lists_rtc_full_checkpoints_newest_first_without_duplicate_last_link(self) -> None:
+        choices = available_checkpoints(self.rtc_root)
         self.assertEqual(
             [(item[0], item[1], item[3]) for item in choices],
             [
-                ("RTC-full", 50000, "full"),
-                ("RTC-full", 45000, "full"),
-                ("RTC-full", 40000, "full"),
-                ("RTC-full", 30000, "full"),
+                ("rtc_full", 50000, "full"),
+                ("rtc_full", 45000, "full"),
+                ("rtc_full", 40000, "full"),
+                ("rtc_full", 30000, "full"),
             ],
         )
-        with patch("builtins.input", side_effect=["0", "3"]), redirect_stdout(io.StringIO()):
+        with patch("builtins.input", side_effect=["0", "2", "0", "3"]), redirect_stdout(io.StringIO()):
             selected = choose_checkpoint(self.root)
         self.assertEqual(selected, choices[2][2])
 
-    def test_cancel_exits_before_loading_or_connecting(self):
-        cfg = {"checkpoint": str(self.root / "pretrained_model")}
-        with (
-            patch.object(sys, "argv", ["deploy_dualarm.py"]),
-            patch("deploy_dualarm.read_json", return_value=cfg),
-            patch("builtins.input", return_value="q"),
-            patch("deploy_dualarm.load_policy") as load_policy,
-            redirect_stdout(io.StringIO()),
-        ):
-            deploy_main()
-        load_policy.assert_not_called()
+    def test_lists_only_folders_with_weights(self) -> None:
+        (self.root / "tokenizer").mkdir()
+        for name in ("incomplete", ".download"):
+            checkpoint = self.root / name / "060000" / "pretrained_model"
+            checkpoint.mkdir(parents=True)
+            (checkpoint / "config.json").write_text("{}")
+        (self.root / ".download/060000/pretrained_model/model.safetensors").write_bytes(b"weight")
+        self.assertEqual(available_checkpoint_folders(self.root), [self.no_rtc_root, self.rtc_root])
 
-    def test_selected_checkpoint_reaches_execution_without_using_default_link(self):
+    def test_checkpoint_menu_only_lists_the_selected_folder(self) -> None:
+        output = io.StringIO()
+        with patch("builtins.input", side_effect=["1", "2", "1"]) as keys, redirect_stdout(output):
+            selected = choose_checkpoint(self.root)
+        self.assertEqual(selected, self.no_rtc_root / "025000/pretrained_model")
+        self.assertEqual(keys.call_count, 3)
+        self.assertIn("step 25,000", output.getvalue())
+        self.assertNotIn("step 50,000", output.getvalue())
+
+    def test_legacy_config_can_still_select_from_one_experiment_folder(self) -> None:
+        with patch("builtins.input", return_value="2"), redirect_stdout(io.StringIO()):
+            selected = choose_checkpoint(self.rtc_root)
+        self.assertEqual(selected, self.rtc_root / "045000/pretrained_model")
+
+    def test_empty_root_reports_no_checkpoints(self) -> None:
+        with self.assertRaisesRegex(FileNotFoundError, "No local checkpoints"):
+            choose_checkpoint(self.root / "missing")
+
+    def test_cancel_at_either_menu_exits_before_loading_or_connecting(self) -> None:
+        cfg = {"checkpoint": str(self.root / "pretrained_model"), "checkpoint_root": str(self.root)}
+        for answers in (["q"], ["2", "q"]):
+            with (
+                self.subTest(answers=answers),
+                patch.object(sys, "argv", ["deploy_dualarm.py"]),
+                patch("deploy_dualarm.read_json", return_value=cfg),
+                patch("builtins.input", side_effect=answers),
+                patch("deploy_dualarm.inspect_checkpoint") as inspect,
+                patch("deploy_dualarm.require_compatible_rdk") as require_rdk,
+                patch("deploy_dualarm.load_policy") as load_policy,
+                patch("deploy_dualarm.execute") as execute,
+                redirect_stdout(io.StringIO()),
+            ):
+                deploy_main()
+            inspect.assert_not_called()
+            require_rdk.assert_not_called()
+            load_policy.assert_not_called()
+            execute.assert_not_called()
+
+    def test_eof_at_either_menu_exits_before_loading(self) -> None:
+        for answers in ([EOFError], ["2", EOFError]):
+            with (
+                self.subTest(answers=answers),
+                patch("builtins.input", side_effect=answers),
+                redirect_stdout(io.StringIO()),
+                self.assertRaisesRegex(SystemExit, "--checkpoint"),
+            ):
+                choose_checkpoint(self.root)
+
+    def test_selected_checkpoint_reaches_execution_without_using_default_link(self) -> None:
         cfg = read_json(Path(__file__).with_name("deploy_config.json"))
         cfg["checkpoint"] = str(self.root / "pretrained_model")
         cfg["checkpoint_root"] = str(self.root)
-        expected = self.root / "050000/pretrained_model"
+        expected = self.rtc_root / "050000/pretrained_model"
         with (
             patch.dict(sys.modules, {"flexivrdk": SimpleNamespace(__version__="1.9.2")}),
             patch.object(sys, "argv", ["deploy_dualarm.py"]),
             patch("deploy_dualarm.read_json", return_value=cfg),
-            patch("builtins.input", side_effect=["1", "1"]),
-            patch("deploy_dualarm.inspect_checkpoint", return_value={"kind": "LoRA"}),
+            patch("builtins.input", side_effect=["2", "1", "1"]),
+            patch("deploy_dualarm.inspect_checkpoint", return_value={"kind": "full"}),
             patch("deploy_dualarm.read_start_pose", return_value=(np.zeros(16), {})),
             patch("deploy_dualarm.load_policy", return_value=(None, None, None)) as load_policy,
             patch("deploy_dualarm.execute") as execute,
@@ -258,6 +360,22 @@ class TestCheckpointMenu(unittest.TestCase):
             deploy_main()
         self.assertEqual(Path(load_policy.call_args.args[0]["checkpoint"]), expected)
         execute.assert_called_once()
+
+    def test_explicit_checkpoint_skips_both_checkpoint_menus(self) -> None:
+        expected = self.rtc_root / "040000/pretrained_model"
+        cfg = read_json(Path(__file__).with_name("deploy_config.json"))
+        with (
+            patch.object(sys, "argv", ["deploy_dualarm.py", "--checkpoint", str(expected), "--check"]),
+            patch("deploy_dualarm.read_json", return_value=cfg),
+            patch("builtins.input", side_effect=AssertionError("unexpected menu")),
+            patch("deploy_dualarm.inspect_checkpoint", return_value={"kind": "full"}) as inspect,
+            patch("deploy_dualarm.load_policy") as load_policy,
+            patch("deploy_dualarm.execute") as execute,
+        ):
+            deploy_main()
+        self.assertEqual(Path(inspect.call_args.args[0]["checkpoint"]), expected)
+        load_policy.assert_not_called()
+        execute.assert_not_called()
 
     def test_incompatible_rdk_fails_before_hardware_execution(self):
         with (
@@ -395,6 +513,10 @@ class TestStepDispatch(unittest.TestCase):
 
 
 class TestGoHome(unittest.TestCase):
+    def setUp(self) -> None:
+        self.enterContext(patch("goHome.read_home_tcp", return_value=np.zeros((2, 7))))
+        self.enterContext(patch("goHome.plan_home"))
+
     def test_check_only_reads_first_frame_without_connecting(self):
         start_pose = (np.zeros(16), {"scene": "scene_0001", "timestamp_ms": 150.0})
         with (
@@ -416,15 +538,15 @@ class TestGoHome(unittest.TestCase):
             patch("goHome.read_start_pose", return_value=start_pose),
             patch("goHome.require_compatible_rdk"),
             patch("goHome.FlexivDualArm") as robot_class,
-            patch("goHome.align_start_pose") as align,
+            patch("goHome.execute_home") as align,
         ):
             robot = robot_class.return_value
             robot.check_initial_pose.return_value = (np.zeros(16), 0.0)
             robot.read_state.return_value = np.zeros(16)
             robot.wait_for_grippers_closed.return_value = (0.0, 0.0)
             events = []
-            robot.send_action.side_effect = (
-                lambda target, **kwargs: events.append(("gripper", target.copy())) or target
+            robot.send_action.side_effect = lambda target, **kwargs: (
+                events.append(("gripper", target.copy())) or target
             )
             robot.wait_for_target.side_effect = lambda *args, **kwargs: events.append(("opened", None))
             align.side_effect = lambda *args: events.append(("align", None))
@@ -432,10 +554,11 @@ class TestGoHome(unittest.TestCase):
         robot = robot_class.return_value
         robot.connect.assert_called_once_with(with_cameras=False)
         self.assertIs(align.call_args.args[0], robot)
-        np.testing.assert_allclose(align.call_args.args[1][0][[7, 15]], [0.1, 0.1])
+        np.testing.assert_allclose(align.call_args.args[2][[7, 15]], [0.1, 0.1])
         np.testing.assert_array_equal(recorded[[7, 15]], [0.05, 0.05])
         self.assertEqual([event[0] for event in events], ["gripper", "opened", "align", "gripper"])
         np.testing.assert_allclose(events[0][1][[7, 15]], [0.1, 0.1])
+        robot.initialize_grippers.assert_not_called()
         np.testing.assert_allclose(events[-1][1][[7, 15]], [0.0, 0.0])
         self.assertTrue(
             all(call.kwargs["force_gripper_command"] for call in robot.send_action.call_args_list)
@@ -452,7 +575,7 @@ class TestGoHome(unittest.TestCase):
             ),
             patch("goHome.require_compatible_rdk"),
             patch("goHome.FlexivDualArm") as robot_class,
-            patch("goHome.align_start_pose") as align,
+            patch("goHome.execute_home") as align,
         ):
             robot = robot_class.return_value
             robot.check_initial_pose.return_value = (np.zeros(16), 0.0)
@@ -462,6 +585,42 @@ class TestGoHome(unittest.TestCase):
         align.assert_not_called()
         robot.send_action.assert_called_once()
         robot.close.assert_called_once()
+
+
+class TestInitGrippers(unittest.TestCase):
+    def test_check_does_not_connect_or_require_recording(self) -> None:
+        with (
+            patch.object(sys, "argv", ["init_grippers.py", "--check"]),
+            patch("init_grippers.require_compatible_rdk") as check_rdk,
+            patch("init_grippers.FlexivDualArm") as robot_class,
+            patch("deploy_dualarm.read_start_pose", side_effect=AssertionError("unexpected recording read")),
+        ):
+            init_grippers_main()
+        robot_class.assert_not_called()
+        check_rdk.assert_not_called()
+
+    def test_init_only_and_cleanup_on_success_or_failure(self) -> None:
+        for error in (None, TimeoutError("Init timeout"), KeyboardInterrupt()):
+            with (
+                self.subTest(error=error),
+                patch.object(sys, "argv", ["init_grippers.py"]),
+                patch("init_grippers.require_compatible_rdk"),
+                patch("init_grippers.FlexivDualArm") as robot_class,
+                patch(
+                    "deploy_dualarm.read_start_pose", side_effect=AssertionError("unexpected recording read")
+                ),
+            ):
+                robot = robot_class.return_value
+                robot.initialize_grippers.side_effect = error
+                if error is None:
+                    init_grippers_main()
+                else:
+                    with self.assertRaises(type(error)):
+                        init_grippers_main()
+                self.assertEqual(
+                    [call[0] for call in robot.method_calls], ["connect", "initialize_grippers", "close"]
+                )
+                robot.connect.assert_called_once_with(with_cameras=False)
 
 
 class TestTransforms(unittest.TestCase):
@@ -494,41 +653,141 @@ class TestTransforms(unittest.TestCase):
 
 
 class TestExecutionInitialization(unittest.TestCase):
-    def test_engine_construction_finishes_before_hardware_connection(self):
-        cfg = read_json(Path(__file__).with_name("deploy_config.json"))
-        cfg["duration_s"] = 0.0
-        order = []
-        robot, engine = MagicMock(), MagicMock()
-        robot.connect.side_effect = lambda: order.append("connect")
-        robot.wait_for_fresh_observation.side_effect = lambda **kwargs: order.append("fresh_frames")
-        engine.start.side_effect = lambda: order.append("start")
-        engine.resume.side_effect = lambda: order.append("resume")
+    def setUp(self) -> None:
+        self.cfg = read_json(Path(__file__).with_name("deploy_config.json"))
+        self.cfg["duration_s"] = 0.0
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.cfg["telemetry"] = str(Path(directory.name) / "telemetry.jsonl")
+        self.order: list[str | tuple[str, float]] = []
+        self.robot, self.engine = MagicMock(), MagicMock()
+        self.robot.connect.side_effect = lambda: self.order.append("connect")
+        self.robot.hold.side_effect = lambda: self.order.append("hold")
+        self.robot.wait_for_fresh_observation.side_effect = lambda **kwargs: self.order.append("fresh_frames")
+        self.engine.start.side_effect = lambda: self.order.append("start")
+        self.engine.resume.side_effect = lambda: self.order.append("resume")
 
-        def make_engine(**kwargs):
-            order.append("construct_engine")
-            return engine
+        def make_engine(**kwargs: object) -> MagicMock:
+            self.order.append("construct_engine")
+            return self.engine
 
-        with (
-            tempfile.TemporaryDirectory() as directory,
+        self.make_rtc_engine = MagicMock(side_effect=make_engine)
+        self.enterContext(
             patch.dict(
                 sys.modules,
                 {
-                    "lerobot.inference": SimpleNamespace(RTCInferenceEngine=make_engine),
+                    "lerobot.inference": SimpleNamespace(RTCInferenceEngine=self.make_rtc_engine),
                     "lerobot.policies.rtc.configuration_rtc": SimpleNamespace(RTCConfig=MagicMock()),
                 },
-            ),
-            patch("flexiv_deploy_hardware.FlexivDualArm", return_value=robot),
-            patch("deploy_dualarm.align_start_pose", side_effect=lambda *_: order.append("align")),
-            patch("deploy_dualarm.time.sleep", side_effect=lambda seconds: order.append(("settle", seconds))),
-        ):
-            cfg["telemetry"] = str(Path(directory) / "telemetry.jsonl")
-            execute_deployment(cfg, None, None, None, "continuous", (np.zeros(16), {"scene": "scene_0001"}))
-        self.assertEqual(
-            order,
-            ["construct_engine", "connect", "align", ("settle", 2.0), "start", "fresh_frames", "resume"],
+            )
         )
-        robot.close.assert_called_once()
-        engine.stop.assert_called_once()
+        self.enterContext(patch("flexiv_deploy_hardware.FlexivDualArm", return_value=self.robot))
+        self.enterContext(
+            patch("deploy_dualarm.align_start_pose", side_effect=lambda *_: self.order.append("align"))
+        )
+        self.enterContext(
+            patch(
+                "deploy_dualarm.time.sleep",
+                side_effect=lambda seconds: self.order.append(("settle", seconds)),
+            )
+        )
+
+    def _run(self, mode: str = "continuous") -> None:
+        execute_deployment(self.cfg, None, None, None, mode, (np.zeros(16), {"scene": "scene_0001"}))
+
+    def _assert_cancelled_at_home(self) -> None:
+        self.assertIn("align", self.order)
+        self.robot.hold.assert_called_once()
+        self.robot.send_action.assert_not_called()
+        self.robot.wait_for_fresh_observation.assert_not_called()
+        self.engine.start.assert_not_called()
+        self.engine.resume.assert_not_called()
+        self.engine.notify_observation.assert_not_called()
+        self.robot.close.assert_called_once()
+        self.engine.stop.assert_called_once()
+
+    def test_home_and_start_key_precede_policy_execution(self) -> None:
+        def press_start(prompt: str) -> str:
+            self.assertIn("home", prompt)
+            self.engine.start.assert_not_called()
+            self.engine.resume.assert_not_called()
+            self.robot.send_action.assert_not_called()
+            self.order.append("start_key")
+            return ""
+
+        with patch("builtins.input", side_effect=press_start):
+            self._run()
+        self.assertEqual(
+            self.order,
+            [
+                "construct_engine",
+                "connect",
+                "align",
+                ("settle", 2.0),
+                "hold",
+                "start_key",
+                "start",
+                "fresh_frames",
+                "resume",
+            ],
+        )
+        self.robot.close.assert_called_once()
+        self.engine.stop.assert_called_once()
+
+    def test_q_at_home_cancels_before_policy_start(self) -> None:
+        with patch("builtins.input", return_value="q"):
+            self._run()
+        self._assert_cancelled_at_home()
+
+    def test_eof_at_home_cancels_before_policy_start(self) -> None:
+        with patch("builtins.input", side_effect=EOFError):
+            self._run()
+        self._assert_cancelled_at_home()
+
+    def test_interrupt_at_home_closes_devices_without_policy_start(self) -> None:
+        with patch("builtins.input", side_effect=KeyboardInterrupt), self.assertRaises(KeyboardInterrupt):
+            self._run()
+        self._assert_cancelled_at_home()
+
+    def test_invalid_start_text_keeps_waiting_until_enter(self) -> None:
+        answers = iter(["not ready", ""])
+
+        def press_start(prompt: str) -> str:
+            self.engine.start.assert_not_called()
+            self.engine.resume.assert_not_called()
+            self.robot.send_action.assert_not_called()
+            return next(answers)
+
+        with patch("builtins.input", side_effect=press_start) as keys, redirect_stdout(io.StringIO()):
+            self._run()
+        self.assertEqual(keys.call_count, 2)
+        self.engine.resume.assert_called_once()
+
+    def test_step_mode_waits_for_enter_after_home_and_dispatches_one_action(self) -> None:
+        answers = iter(["", "q"])
+        observation = dict.fromkeys(ACTION_NAMES, 0.0)
+
+        def press_step(prompt: str) -> str:
+            self.assertIn("单步", prompt)
+            self.assertIn("align", self.order)
+            if keys.call_count == 1:
+                dispatch.assert_not_called()
+                self.engine.resume.assert_not_called()
+                self.robot.send_action.assert_not_called()
+            return next(answers)
+
+        with (
+            patch(
+                "deploy_dualarm.dispatch_single_step", return_value=(observation, np.zeros(16), 0.0)
+            ) as dispatch,
+            patch("builtins.input", side_effect=press_step) as keys,
+        ):
+            self._run("step")
+        self.assertEqual(keys.call_count, 2)
+        dispatch.assert_called_once()
+        self.robot.wait_for_target.assert_called_once()
+        self.robot.close.assert_called_once()
+        self.engine.stop.assert_called_once()
 
 
 class TestMockedHardware(unittest.TestCase):
@@ -593,6 +852,12 @@ class TestMockedHardware(unittest.TestCase):
             def __init__(self, robot):
                 pass
 
+            def list(self) -> list[str]:
+                return ["Flange", "Teleop-GN01"]
+
+            def name(self) -> str:
+                return "Teleop-GN01"
+
             def Switch(self, name):
                 pass
 
@@ -612,7 +877,11 @@ class TestMockedHardware(unittest.TestCase):
                 self.robot = robot
                 self.joint_positions_at_commands = []
                 self.width = 0.05
+                self.init_calls = 0
                 created_grippers.append(self)
+
+            def Init(self):
+                self.init_calls += 1
 
             def Enable(self, name):
                 pass
@@ -678,6 +947,181 @@ class TestMockedHardware(unittest.TestCase):
         self.assertEqual(len(self.created[1].commands), before_hold + 1)
         self.assertEqual(len(self.robot.grippers["left"].commands), 1)
         self.assertAlmostEqual(self.created[0].commands[-1][0][0], 0.12)
+
+    def test_gripper_init_waits_for_delayed_motion_and_updates_widths(self) -> None:
+        self.robot.connect(with_cameras=False)
+        clock = [0.0]
+
+        def sleep(seconds: float) -> None:
+            clock[0] += seconds
+
+        def states():
+            return SimpleNamespace(width=0.02, is_moving=8.0 <= clock[0] < 12.0, force=0.0)
+
+        counts = [len(arm.commands) for arm in self.created]
+        with (
+            patch("flexiv_deploy_hardware.time.monotonic", side_effect=lambda: clock[0]),
+            patch("flexiv_deploy_hardware.time.sleep", side_effect=sleep),
+            patch.object(sys.modules["flexivrdk"].Gripper, "states", side_effect=states),
+        ):
+            self.robot.initialize_grippers()
+        self.assertGreaterEqual(clock[0], 12.5)
+        self.assertEqual([g.init_calls for g in self.created_grippers], [1, 1])
+        self.assertEqual([len(arm.commands) for arm in self.created], counts)
+        for width in self.robot._last_gripper.values():
+            self.assertAlmostEqual(width, 0.02)
+        self.assertTrue(all(not g.commands for g in self.created_grippers))
+
+    def test_gripper_init_motion_timeout(self) -> None:
+        self.robot.connect(with_cameras=False)
+        clock = [0.0]
+
+        def sleep(seconds: float) -> None:
+            clock[0] += seconds
+
+        with (
+            patch("flexiv_deploy_hardware.time.monotonic", side_effect=lambda: clock[0]),
+            patch("flexiv_deploy_hardware.time.sleep", side_effect=sleep),
+            patch.object(
+                sys.modules["flexivrdk"].Gripper,
+                "states",
+                return_value=SimpleNamespace(width=0.05, is_moving=True),
+            ),
+            self.assertRaisesRegex(TimeoutError, "Init settling timed out"),
+        ):
+            self.robot.initialize_grippers()
+        self.assertEqual([g.init_calls for g in self.created_grippers], [1, 1])
+        self.assertTrue(all(not g.commands for g in self.created_grippers))
+
+    def test_active_tool_does_not_trigger_redundant_switch(self) -> None:
+        def read_before_enable() -> str:
+            self.assertFalse(self.created[-1].active)
+            return "Teleop-GN01"
+
+        with (
+            patch.object(sys.modules["flexivrdk"].Tool, "name", side_effect=read_before_enable) as name,
+            patch.object(sys.modules["flexivrdk"].Tool, "Switch") as switch,
+        ):
+            self.robot.connect(with_cameras=False)
+        switch.assert_not_called()
+        self.assertEqual(name.call_count, 2)
+        self.assertEqual(len(self.created), 2)
+
+    def test_transient_tool_list_and_name_no_reply_are_retried_before_enable(self) -> None:
+        for method, response in (("list", ["Flange", "Teleop-GN01"]), ("name", "Teleop-GN01")):
+            with self.subTest(method=method):
+                self.created.clear()
+                with (
+                    patch.object(
+                        sys.modules["flexivrdk"].Tool,
+                        method,
+                        side_effect=[RuntimeError("No reply from the robot"), response, response],
+                    ) as query,
+                    patch("flexiv_deploy_hardware.time.sleep") as sleep,
+                ):
+                    self.robot.connect(with_cameras=False)
+                self.assertEqual(query.call_count, 3)
+                sleep.assert_called_once_with(0.25)
+                self.assertEqual(len(self.created), 2)
+                self.robot.close()
+
+    def test_permanent_tool_no_reply_times_out_before_enable_and_stops_follower(self) -> None:
+        self.cfg["connect_timeout_s"] = 0.5
+        clock = [0.0]
+
+        def sleep(seconds: float) -> None:
+            clock[0] += seconds
+
+        with (
+            patch.object(
+                sys.modules["flexivrdk"].Tool,
+                "list",
+                side_effect=RuntimeError("[flexiv::rdk::Tool::list] No reply from the robot"),
+            ) as query,
+            patch("flexiv_deploy_hardware.time.monotonic", side_effect=lambda: clock[0]),
+            patch("flexiv_deploy_hardware.time.sleep", side_effect=sleep),
+            self.assertRaisesRegex(TimeoutError, r"left.*Rizon4-063906.*Tool.list.*0.5 s"),
+        ):
+            self.robot.connect(with_cameras=False)
+        self.assertEqual(query.call_count, 3)
+        self.assertFalse(self.created[0].active)
+        self.assertFalse(self.created[0].commands)
+        self.assertEqual(self.created[0].stops, 1)
+        self.assertFalse(self.created_grippers)
+
+    def test_other_tool_query_errors_are_not_retried(self) -> None:
+        with (
+            patch.object(
+                sys.modules["flexivrdk"].Tool, "list", side_effect=RuntimeError("Invalid SDK state")
+            ) as query,
+            patch("flexiv_deploy_hardware.time.sleep") as sleep,
+            self.assertRaisesRegex(RuntimeError, "Invalid SDK state"),
+        ):
+            self.robot.connect(with_cameras=False)
+        query.assert_called_once()
+        sleep.assert_not_called()
+        self.assertFalse(self.created[0].active)
+        self.assertFalse(self.created[0].commands)
+
+    def test_fault_or_disconnect_during_tool_retry_aborts_without_enable(self) -> None:
+        for method, value in (("fault", True), ("connected", False)):
+            with self.subTest(method=method):
+                self.created.clear()
+
+                def lose_robot(seconds: float, state_method: str = method, reported: bool = value) -> None:
+                    setattr(self.created[0], state_method, lambda: reported)
+
+                with (
+                    patch.object(
+                        sys.modules["flexivrdk"].Tool,
+                        "list",
+                        side_effect=RuntimeError("No reply from the robot"),
+                    ) as query,
+                    patch("flexiv_deploy_hardware.time.sleep", side_effect=lose_robot),
+                    self.assertRaisesRegex(RuntimeError, "disconnected or faulted"),
+                ):
+                    self.robot.connect(with_cameras=False)
+                query.assert_called_once()
+                self.assertFalse(self.created[0].active)
+                self.assertFalse(self.created[0].commands)
+                self.assertEqual(self.created[0].stops, 1)
+
+    def test_tool_switch_write_is_not_retried_on_no_reply(self) -> None:
+        with (
+            patch.object(sys.modules["flexivrdk"].Tool, "name", return_value="Flange"),
+            patch.object(
+                sys.modules["flexivrdk"].Tool, "Switch", side_effect=RuntimeError("No reply from the robot")
+            ) as switch,
+            patch("flexiv_deploy_hardware.time.sleep") as sleep,
+            self.assertRaisesRegex(RuntimeError, "No reply"),
+        ):
+            self.robot.connect(with_cameras=False)
+        switch.assert_called_once_with("Teleop-GN01")
+        sleep.assert_not_called()
+        self.assertFalse(self.created[0].commands)
+        self.assertEqual(self.created[0].stops, 1)
+
+    def test_missing_tool_reports_available_names_before_enabling(self) -> None:
+        self.cfg["arms"]["left"]["tool"] = "MissingTool"
+        with (
+            patch.object(sys.modules["flexivrdk"].Tool, "Switch") as switch,
+            self.assertRaisesRegex(ValueError, r"left.*MissingTool.*available tools=.*Teleop-GN01"),
+        ):
+            self.robot.connect(with_cameras=False)
+        switch.assert_not_called()
+        self.assertEqual(len(self.created), 1)
+        self.assertFalse(self.created[0].active)
+        self.assertFalse(self.created[0].commands)
+        self.assertFalse(self.created_grippers)
+        self.assertEqual(self.created[0].stops, 1)
+
+    def test_different_active_tool_switches_to_configured_tool(self) -> None:
+        with (
+            patch.object(sys.modules["flexivrdk"].Tool, "name", return_value="Flange"),
+            patch.object(sys.modules["flexivrdk"].Tool, "Switch") as switch,
+        ):
+            self.robot.connect(with_cameras=False)
+        self.assertEqual(switch.call_args_list, [call("Teleop-GN01"), call("Teleop-GN01")])
 
     def test_arm_only_connection_does_not_open_cameras(self):
         self.robot.connect(with_cameras=False)
@@ -876,10 +1320,22 @@ class TestMockedHardware(unittest.TestCase):
     def test_go_home_closes_grippers_and_moves_fake_followers_without_prompt(self):
         target = pack_state([0.22] * 7, 0.05, [-0.22] * 7, 0.05)
         start_pose = (target, {"scene": "scene_0001", "timestamp_ms": 150.0})
+        clock = [0.0]
+
+        def sleep(seconds: float) -> None:
+            clock[0] += seconds
+
         with (
+            patch("flexiv_deploy_hardware.time.monotonic", side_effect=lambda: clock[0]),
+            patch("flexiv_deploy_hardware.time.sleep", side_effect=sleep),
             patch.object(sys, "argv", ["goHome.py"]),
             patch("goHome.read_json", return_value=self.deploy_cfg),
             patch("goHome.read_start_pose", return_value=start_pose),
+            patch("goHome.read_home_tcp", return_value=np.zeros((2, 7))),
+            patch("goHome.plan_home"),
+            patch(
+                "goHome.execute_home", side_effect=lambda robot, cfg, target, plan: robot.send_action(target)
+            ),
             patch("goHome.require_compatible_rdk"),
             patch("builtins.input", side_effect=AssertionError("unexpected prompt")),
         ):
@@ -890,6 +1346,7 @@ class TestMockedHardware(unittest.TestCase):
         self.assertGreater(len(self.created[0].commands), 1)
         self.assertGreater(len(self.created[1].commands), 1)
         self.assertEqual([gripper.width for gripper in self.created_grippers], [0.0, 0.0])
+        self.assertEqual([gripper.init_calls for gripper in self.created_grippers], [0, 0])
         for gripper, joint_target in zip(self.created_grippers, (target[:7], target[8:15]), strict=True):
             self.assertEqual(gripper.commands[0], (0.1, 0.2, -65.0))
             self.assertEqual(gripper.commands[-1], (0.0, 0.2, 45.0))
@@ -916,6 +1373,14 @@ class TestMockedHardware(unittest.TestCase):
         self.assertIn("limit 1.000 rad", str(raised.exception))
         self.assertIn("first_frame=1.300", str(raised.exception))
         self.assertEqual([len(robot.commands) for robot in self.created], before)
+
+    def test_initial_pose_distance_limit_can_be_disabled_for_gohome(self):
+        self.robot.connect()
+        target = self.robot.read_state()
+        target[0] += 1.2
+        measured, distance = self.robot.check_initial_pose(target, enforce_distance_limit=False)
+        np.testing.assert_array_equal(measured, self.robot.read_state())
+        self.assertAlmostEqual(distance, 1.2, places=6)
 
     def test_partial_connect_failure_stops_already_connected_followers(self):
         calls = 0

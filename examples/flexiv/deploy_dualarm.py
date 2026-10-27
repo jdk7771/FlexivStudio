@@ -77,6 +77,21 @@ def choose_run_mode() -> str | None:
         print("请输入 1、2 或 q。", flush=True)
 
 
+def wait_for_continuous_start() -> bool:
+    """Keep the followers at the recorded home pose until Enter starts the policy."""
+    while True:
+        try:
+            answer = input("已回到 home（采集首帧）。按 Enter 开始连续运行，输入 q 退出：").strip().lower()
+        except EOFError:
+            LOGGER.info("No start key received; deployment cancelled at home")
+            return False
+        if answer in {"q", "quit"}:
+            return False
+        if not answer:
+            return True
+        print("按 Enter 开始连续运行，或输入 q 退出。", flush=True)
+
+
 def read_start_pose(cfg: dict) -> tuple[Any, dict]:
     """Recreate the first retained observation.state from the source HDF5 at each launch."""
     import h5py
@@ -355,9 +370,13 @@ def execute(
         align_start_pose(robot, start_pose)
         LOGGER.info("Initial pose reached; waiting %.1f s to settle before inference", START_POSE_SETTLE_S)
         time.sleep(START_POSE_SETTLE_S)
+        if run_mode == "continuous":
+            robot.hold()
+            if not wait_for_continuous_start():
+                LOGGER.info("Deployment cancelled before policy execution")
+                return
         engine.start()
-        # Blocking RDK initialization can delay camera readers. Require NEW frames
-        # after setup instead of relying on the former MOVE/RUN input pauses.
+        # Require NEW frames after setup and any operator wait before policy execution.
         robot.wait_for_fresh_observation(timeout_s=cfg["hardware"]["connect_timeout_s"])
         if run_mode == "continuous":
             engine.resume()

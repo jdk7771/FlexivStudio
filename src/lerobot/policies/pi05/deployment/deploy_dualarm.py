@@ -40,15 +40,44 @@ def available_checkpoints(models_root: Path) -> list[tuple[str, int, Path, str]]
         if (path / "config.json").is_file() and (
             (path / "adapter_model.safetensors").is_file() or (path / "model.safetensors").is_file()
         ):
-            choices.append(("RTC-full", int(step), path, kind))
+            choices.append((models_root.name, int(step), path, kind))
     return sorted(choices, key=lambda item: -item[1])
 
 
+def available_checkpoint_folders(models_root: Path) -> list[Path]:
+    """List experiment folders containing local weights, excluding download staging folders."""
+    return sorted(
+        (
+            path
+            for path in models_root.glob("*")
+            if path.is_dir() and not path.name.startswith(".") and available_checkpoints(path)
+        ),
+        key=lambda path: path.name.casefold(),
+    )
+
+
 def choose_checkpoint(models_root: Path) -> Path | None:
+    folders = available_checkpoint_folders(models_root)
+    if folders:
+        print(f"\n选择权重文件夹（{models_root}）：", flush=True)
+        for index, folder in enumerate(folders, 1):
+            print(f"  {index}. {folder.name}", flush=True)
+        while True:
+            try:
+                answer = input("输入文件夹编号（q 退出）：").strip().lower()
+            except EOFError as error:
+                raise SystemExit("需要交互输入；也可用 --checkpoint 直接指定权重") from error
+            if answer in {"q", "quit"}:
+                return None
+            if answer.isdecimal() and 1 <= int(answer) <= len(folders):
+                models_root = folders[int(answer) - 1]
+                break
+            print(f"请输入 1-{len(folders)}，或输入 q 退出。", flush=True)
+    # Retain support for custom configs whose checkpoint_root is one experiment folder.
     choices = available_checkpoints(models_root)
     if not choices:
         raise FileNotFoundError(f"No local checkpoints found under {models_root}")
-    print("\n选择本地 checkpoint：", flush=True)
+    print(f"\n选择 {models_root.name} 的 checkpoint：", flush=True)
     for index, (experiment, step, path, kind) in enumerate(choices, 1):
         print(f"  {index}. {experiment}  step {step:,}  {kind}  {path}", flush=True)
     while True:
@@ -75,6 +104,21 @@ def choose_run_mode() -> str | None:
         if answer in {"1", "2"}:
             return "step" if answer == "1" else "continuous"
         print("请输入 1、2 或 q。", flush=True)
+
+
+def wait_for_continuous_start() -> bool:
+    """Keep the followers at the recorded home pose until Enter starts the policy."""
+    while True:
+        try:
+            answer = input("已回到 home（采集首帧）。按 Enter 开始连续运行，输入 q 退出：").strip().lower()
+        except EOFError:
+            LOGGER.info("No start key received; deployment cancelled at home")
+            return False
+        if answer in {"q", "quit"}:
+            return False
+        if not answer:
+            return True
+        print("按 Enter 开始连续运行，或输入 q 退出。", flush=True)
 
 
 def read_start_pose(cfg: dict) -> tuple[Any, dict]:
@@ -355,9 +399,13 @@ def execute(
         align_start_pose(robot, start_pose)
         LOGGER.info("Initial pose reached; waiting %.1f s to settle before inference", START_POSE_SETTLE_S)
         time.sleep(START_POSE_SETTLE_S)
+        if run_mode == "continuous":
+            robot.hold()
+            if not wait_for_continuous_start():
+                LOGGER.info("Deployment cancelled before policy execution")
+                return
         engine.start()
-        # Blocking RDK initialization can delay camera readers. Require NEW frames
-        # after setup instead of relying on the former MOVE/RUN input pauses.
+        # Require NEW frames after setup and any operator wait before policy execution.
         robot.wait_for_fresh_observation(timeout_s=cfg["hardware"]["connect_timeout_s"])
         if run_mode == "continuous":
             engine.resume()

@@ -1,5 +1,5 @@
 {
-  "checkpoint_root": "/home/nematrix/snap/lerobot/src/lerobot/policies/pi05/checkpoints/rtc_full",
+  "checkpoint_root": "/home/nematrix/snap/lerobot/src/lerobot/policies/pi05/checkpoints",
   "checkpoint": "/home/nematrix/snap/lerobot/src/lerobot/policies/pi05/checkpoints/rtc_full/last/pretrained_model",
   "base_model": "/home/nematrix/snap/models/pi05_base",
   "tokenizer": "/home/nematrix/snap/lerobot/src/lerobot/policies/pi05/checkpoints/rtc_full/tokenizer",

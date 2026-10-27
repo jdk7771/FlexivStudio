@@ -7,7 +7,7 @@ pi05/
 ├── processor_pi05.py             # 输入输出预处理
 ├── training/                    # 每个实验的 JSON 配置和训练 bash
 ├── checkpoints/
-│   └── rtc_full/                # 本地 030000 / 040000 / 045000 / 050000
+│   └── rtc_full/                # 本地 025000（仅部署）/ 030000 / 040000 / 045000 / 050000
 └── deployment/                  # Flexiv 部署代码副本和本地启动入口
 ```
 

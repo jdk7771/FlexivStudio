@@ -66,23 +66,21 @@ def contact_torque_limits(hw: dict, side: str) -> list[float] | None:
     return [float(value) for value in limits]
 
 
-def validate_settings(cfg: dict) -> None:
+def validate_settings(cfg: dict, *, rtc: bool = True) -> None:
     if cfg["fps"] != 15:
         raise ValueError(
             "These checkpoints use 15 Hz training data; changing playback speed changes the task"
         )
-    for name in (
-        "chunk_size",
-        "training_max_delay",
-        "rtc_execution_horizon",
-        "rtc_queue_threshold",
-        "num_inference_steps",
-    ):
+    integer_settings = ["chunk_size", "num_inference_steps"]
+    if rtc:
+        integer_settings.extend(("training_max_delay", "rtc_execution_horizon", "rtc_queue_threshold"))
+    for name in integer_settings:
         if type(cfg[name]) is not int or cfg[name] <= 0:
             raise ValueError(f"{name} must be a positive integer")
-    delay, chunk, horizon = cfg["training_max_delay"], cfg["chunk_size"], cfg["rtc_execution_horizon"]
-    if not delay <= horizon <= chunk - delay or not delay <= cfg["rtc_queue_threshold"] < chunk:
-        raise ValueError("RTC prefix capacity and queue threshold do not fit the trained delay/chunk")
+    if rtc:
+        delay, chunk, horizon = cfg["training_max_delay"], cfg["chunk_size"], cfg["rtc_execution_horizon"]
+        if not delay <= horizon <= chunk - delay or not delay <= cfg["rtc_queue_threshold"] < chunk:
+            raise ValueError("RTC prefix capacity and queue threshold do not fit the trained delay/chunk")
     for name in ("max_observation_age_s", "action_timeout_s", "duration_s"):
         if not math.isfinite(cfg[name]) or cfg[name] <= 0:
             raise ValueError(f"{name} must be finite and positive")
@@ -132,20 +130,33 @@ def validate_settings(cfg: dict) -> None:
         raise ValueError("Use collection's signed gripper forces: negative open, positive close")
 
 
-def inspect_checkpoint(cfg: dict) -> dict:
+def inspect_checkpoint(cfg: dict, *, rtc: bool = True) -> dict:
     """Reject incompatible/incomplete checkpoints BEFORE model or hardware creation."""
-    validate_settings(cfg)
     checkpoint = Path(cfg["checkpoint"])
     model = read_json(checkpoint / "config.json")
+    training_delay = model.get("rtc_training_max_delay", 0)
+    if type(training_delay) is not int or training_delay < 0:
+        raise ValueError("Checkpoint rtc_training_max_delay must be a non-negative integer")
+    validate_settings(cfg, rtc=rtc)
     expected = {
         "type": "pi05",
         "chunk_size": cfg["chunk_size"],
-        "rtc_training_max_delay": cfg["training_max_delay"],
         "use_relative_actions": True,
     }
+    # Training with a prefix also supports prefix-free synchronous inference.
+    # Only trained-RTC execution requires matching the checkpoint's delay capacity.
+    if rtc:
+        expected["rtc_training_max_delay"] = cfg["training_max_delay"]
     for key, value in expected.items():
         if model.get(key) != value:
             raise ValueError(f"Checkpoint {key}={model.get(key)!r}, expected {value!r}")
+    execution_steps = model.get("n_action_steps", model["chunk_size"])
+    if type(execution_steps) is not int or not 0 < execution_steps <= model["chunk_size"]:
+        raise ValueError("Checkpoint n_action_steps must be within the predicted chunk")
+    if not rtc:
+        requested_steps = cfg.get("n_action_steps", execution_steps)
+        if type(requested_steps) is not int or not 1 <= requested_steps <= model["chunk_size"]:
+            raise ValueError(f"n_action_steps must be an integer between 1 and {model['chunk_size']}")
     if (
         model.get("n_obs_steps", 1) != 1
         or model.get("use_visual_memory")
@@ -211,4 +222,8 @@ def inspect_checkpoint(cfg: dict) -> dict:
     tensor_header(checkpoint / ("adapter_model.safetensors" if adapter else "model.safetensors"))
     if adapter:
         tensor_header(Path(cfg["base_model"]) / "model.safetensors")
-    return {"checkpoint": str(checkpoint), "kind": "LoRA" if adapter else "full", "model_config": model}
+    return {
+        "checkpoint": str(checkpoint),
+        "kind": "LoRA" if adapter else "full",
+        "model_config": model,
+    }

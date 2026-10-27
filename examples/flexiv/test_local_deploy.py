@@ -17,7 +17,7 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import numpy as np
 from deploy_dualarm import (
@@ -495,41 +495,140 @@ class TestTransforms(unittest.TestCase):
 
 
 class TestExecutionInitialization(unittest.TestCase):
-    def test_engine_construction_finishes_before_hardware_connection(self):
-        cfg = read_json(Path(__file__).with_name("deploy_config.json"))
-        cfg["duration_s"] = 0.0
-        order = []
-        robot, engine = MagicMock(), MagicMock()
-        robot.connect.side_effect = lambda: order.append("connect")
-        robot.wait_for_fresh_observation.side_effect = lambda **kwargs: order.append("fresh_frames")
-        engine.start.side_effect = lambda: order.append("start")
-        engine.resume.side_effect = lambda: order.append("resume")
+    def setUp(self) -> None:
+        self.cfg = read_json(Path(__file__).with_name("deploy_config.json"))
+        self.cfg["duration_s"] = 0.0
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.cfg["telemetry"] = str(Path(directory.name) / "telemetry.jsonl")
+        self.order: list[str | tuple[str, float]] = []
+        self.robot, self.engine = MagicMock(), MagicMock()
+        self.robot.connect.side_effect = lambda: self.order.append("connect")
+        self.robot.hold.side_effect = lambda: self.order.append("hold")
+        self.robot.wait_for_fresh_observation.side_effect = lambda **kwargs: self.order.append("fresh_frames")
+        self.engine.start.side_effect = lambda: self.order.append("start")
+        self.engine.resume.side_effect = lambda: self.order.append("resume")
 
-        def make_engine(**kwargs):
-            order.append("construct_engine")
-            return engine
+        def make_engine(**kwargs: object) -> MagicMock:
+            self.order.append("construct_engine")
+            return self.engine
 
-        with (
-            tempfile.TemporaryDirectory() as directory,
+        self.enterContext(
             patch.dict(
                 sys.modules,
                 {
                     "lerobot.inference": SimpleNamespace(RTCInferenceEngine=make_engine),
                     "lerobot.policies.rtc.configuration_rtc": SimpleNamespace(RTCConfig=MagicMock()),
                 },
-            ),
-            patch("flexiv_deploy_hardware.FlexivDualArm", return_value=robot),
-            patch("deploy_dualarm.align_start_pose", side_effect=lambda *_: order.append("align")),
-            patch("deploy_dualarm.time.sleep", side_effect=lambda seconds: order.append(("settle", seconds))),
-        ):
-            cfg["telemetry"] = str(Path(directory) / "telemetry.jsonl")
-            execute_deployment(cfg, None, None, None, "continuous", (np.zeros(16), {"scene": "scene_0001"}))
-        self.assertEqual(
-            order,
-            ["construct_engine", "connect", "align", ("settle", 2.0), "start", "fresh_frames", "resume"],
+            )
         )
-        robot.close.assert_called_once()
-        engine.stop.assert_called_once()
+        self.enterContext(patch("flexiv_deploy_hardware.FlexivDualArm", return_value=self.robot))
+        self.enterContext(
+            patch("deploy_dualarm.align_start_pose", side_effect=lambda *_: self.order.append("align"))
+        )
+        self.enterContext(
+            patch(
+                "deploy_dualarm.time.sleep",
+                side_effect=lambda seconds: self.order.append(("settle", seconds)),
+            )
+        )
+
+    def _run(self, mode: str = "continuous") -> None:
+        execute_deployment(self.cfg, None, None, None, mode, (np.zeros(16), {"scene": "scene_0001"}))
+
+    def _assert_cancelled_at_home(self) -> None:
+        self.assertIn("align", self.order)
+        self.robot.hold.assert_called_once()
+        self.robot.send_action.assert_not_called()
+        self.robot.wait_for_fresh_observation.assert_not_called()
+        self.engine.start.assert_not_called()
+        self.engine.resume.assert_not_called()
+        self.engine.notify_observation.assert_not_called()
+        self.robot.close.assert_called_once()
+        self.engine.stop.assert_called_once()
+
+    def test_home_and_start_key_precede_policy_execution(self) -> None:
+        def press_start(prompt: str) -> str:
+            self.assertIn("home", prompt)
+            self.engine.start.assert_not_called()
+            self.engine.resume.assert_not_called()
+            self.robot.send_action.assert_not_called()
+            self.order.append("start_key")
+            return ""
+
+        with patch("builtins.input", side_effect=press_start):
+            self._run()
+        self.assertEqual(
+            self.order,
+            [
+                "construct_engine",
+                "connect",
+                "align",
+                ("settle", 2.0),
+                "hold",
+                "start_key",
+                "start",
+                "fresh_frames",
+                "resume",
+            ],
+        )
+        self.robot.close.assert_called_once()
+        self.engine.stop.assert_called_once()
+
+    def test_q_at_home_cancels_before_policy_start(self) -> None:
+        with patch("builtins.input", return_value="q"):
+            self._run()
+        self._assert_cancelled_at_home()
+
+    def test_eof_at_home_cancels_before_policy_start(self) -> None:
+        with patch("builtins.input", side_effect=EOFError):
+            self._run()
+        self._assert_cancelled_at_home()
+
+    def test_interrupt_at_home_closes_devices_without_policy_start(self) -> None:
+        with patch("builtins.input", side_effect=KeyboardInterrupt), self.assertRaises(KeyboardInterrupt):
+            self._run()
+        self._assert_cancelled_at_home()
+
+    def test_invalid_start_text_keeps_waiting_until_enter(self) -> None:
+        answers = iter(["not ready", ""])
+
+        def press_start(prompt: str) -> str:
+            self.engine.start.assert_not_called()
+            self.engine.resume.assert_not_called()
+            self.robot.send_action.assert_not_called()
+            return next(answers)
+
+        with patch("builtins.input", side_effect=press_start) as keys, redirect_stdout(io.StringIO()):
+            self._run()
+        self.assertEqual(keys.call_count, 2)
+        self.engine.resume.assert_called_once()
+
+    def test_step_mode_waits_for_enter_after_home_and_dispatches_one_action(self) -> None:
+        answers = iter(["", "q"])
+        observation = dict.fromkeys(ACTION_NAMES, 0.0)
+
+        def press_step(prompt: str) -> str:
+            self.assertIn("单步", prompt)
+            self.assertIn("align", self.order)
+            if keys.call_count == 1:
+                dispatch.assert_not_called()
+                self.engine.resume.assert_not_called()
+                self.robot.send_action.assert_not_called()
+            return next(answers)
+
+        with (
+            patch(
+                "deploy_dualarm.dispatch_single_step", return_value=(observation, np.zeros(16), 0.0)
+            ) as dispatch,
+            patch("builtins.input", side_effect=press_step) as keys,
+        ):
+            self._run("step")
+        self.assertEqual(keys.call_count, 2)
+        dispatch.assert_called_once()
+        self.robot.wait_for_target.assert_called_once()
+        self.robot.close.assert_called_once()
+        self.engine.stop.assert_called_once()
 
 
 class TestMockedHardware(unittest.TestCase):
@@ -593,6 +692,12 @@ class TestMockedHardware(unittest.TestCase):
         class Tool:
             def __init__(self, robot):
                 pass
+
+            def list(self) -> list[str]:
+                return ["Flange", "Teleop-GN01"]
+
+            def name(self) -> str:
+                return "Teleop-GN01"
 
             def Switch(self, name):
                 pass
@@ -679,6 +784,136 @@ class TestMockedHardware(unittest.TestCase):
         self.assertEqual(len(self.created[1].commands), before_hold + 1)
         self.assertEqual(len(self.robot.grippers["left"].commands), 1)
         self.assertAlmostEqual(self.created[0].commands[-1][0][0], 0.12)
+
+    def test_active_tool_does_not_trigger_redundant_switch(self) -> None:
+        def read_before_enable() -> str:
+            self.assertFalse(self.created[-1].active)
+            return "Teleop-GN01"
+
+        with (
+            patch.object(sys.modules["flexivrdk"].Tool, "name", side_effect=read_before_enable) as name,
+            patch.object(sys.modules["flexivrdk"].Tool, "Switch") as switch,
+        ):
+            self.robot.connect(with_cameras=False)
+        switch.assert_not_called()
+        self.assertEqual(name.call_count, 2)
+        self.assertEqual(len(self.created), 2)
+
+    def test_transient_tool_list_and_name_no_reply_are_retried_before_enable(self) -> None:
+        for method, response in (("list", ["Flange", "Teleop-GN01"]), ("name", "Teleop-GN01")):
+            with self.subTest(method=method):
+                self.created.clear()
+                with (
+                    patch.object(
+                        sys.modules["flexivrdk"].Tool,
+                        method,
+                        side_effect=[RuntimeError("No reply from the robot"), response, response],
+                    ) as query,
+                    patch("flexiv_deploy_hardware.time.sleep") as sleep,
+                ):
+                    self.robot.connect(with_cameras=False)
+                self.assertEqual(query.call_count, 3)
+                sleep.assert_called_once_with(0.25)
+                self.assertEqual(len(self.created), 2)
+                self.robot.close()
+
+    def test_permanent_tool_no_reply_times_out_before_enable_and_stops_follower(self) -> None:
+        self.cfg["connect_timeout_s"] = 0.5
+        clock = [0.0]
+
+        def sleep(seconds: float) -> None:
+            clock[0] += seconds
+
+        with (
+            patch.object(
+                sys.modules["flexivrdk"].Tool,
+                "list",
+                side_effect=RuntimeError("[flexiv::rdk::Tool::list] No reply from the robot"),
+            ) as query,
+            patch("flexiv_deploy_hardware.time.monotonic", side_effect=lambda: clock[0]),
+            patch("flexiv_deploy_hardware.time.sleep", side_effect=sleep),
+            self.assertRaisesRegex(TimeoutError, r"left.*Rizon4-063906.*Tool.list.*0.5 s"),
+        ):
+            self.robot.connect(with_cameras=False)
+        self.assertEqual(query.call_count, 3)
+        self.assertFalse(self.created[0].active)
+        self.assertFalse(self.created[0].commands)
+        self.assertEqual(self.created[0].stops, 1)
+        self.assertFalse(self.created_grippers)
+
+    def test_other_tool_query_errors_are_not_retried(self) -> None:
+        with (
+            patch.object(
+                sys.modules["flexivrdk"].Tool, "list", side_effect=RuntimeError("Invalid SDK state")
+            ) as query,
+            patch("flexiv_deploy_hardware.time.sleep") as sleep,
+            self.assertRaisesRegex(RuntimeError, "Invalid SDK state"),
+        ):
+            self.robot.connect(with_cameras=False)
+        query.assert_called_once()
+        sleep.assert_not_called()
+        self.assertFalse(self.created[0].active)
+        self.assertFalse(self.created[0].commands)
+
+    def test_fault_or_disconnect_during_tool_retry_aborts_without_enable(self) -> None:
+        for method, value in (("fault", True), ("connected", False)):
+            with self.subTest(method=method):
+                self.created.clear()
+
+                def lose_robot(seconds: float, state_method: str = method, reported: bool = value) -> None:
+                    setattr(self.created[0], state_method, lambda: reported)
+
+                with (
+                    patch.object(
+                        sys.modules["flexivrdk"].Tool,
+                        "list",
+                        side_effect=RuntimeError("No reply from the robot"),
+                    ) as query,
+                    patch("flexiv_deploy_hardware.time.sleep", side_effect=lose_robot),
+                    self.assertRaisesRegex(RuntimeError, "disconnected or faulted"),
+                ):
+                    self.robot.connect(with_cameras=False)
+                query.assert_called_once()
+                self.assertFalse(self.created[0].active)
+                self.assertFalse(self.created[0].commands)
+                self.assertEqual(self.created[0].stops, 1)
+
+    def test_tool_switch_write_is_not_retried_on_no_reply(self) -> None:
+        with (
+            patch.object(sys.modules["flexivrdk"].Tool, "name", return_value="Flange"),
+            patch.object(
+                sys.modules["flexivrdk"].Tool, "Switch", side_effect=RuntimeError("No reply from the robot")
+            ) as switch,
+            patch("flexiv_deploy_hardware.time.sleep") as sleep,
+            self.assertRaisesRegex(RuntimeError, "No reply"),
+        ):
+            self.robot.connect(with_cameras=False)
+        switch.assert_called_once_with("Teleop-GN01")
+        sleep.assert_not_called()
+        self.assertFalse(self.created[0].commands)
+        self.assertEqual(self.created[0].stops, 1)
+
+    def test_missing_tool_reports_available_names_before_enabling(self) -> None:
+        self.cfg["arms"]["left"]["tool"] = "MissingTool"
+        with (
+            patch.object(sys.modules["flexivrdk"].Tool, "Switch") as switch,
+            self.assertRaisesRegex(ValueError, r"left.*MissingTool.*available tools=.*Teleop-GN01"),
+        ):
+            self.robot.connect(with_cameras=False)
+        switch.assert_not_called()
+        self.assertEqual(len(self.created), 1)
+        self.assertFalse(self.created[0].active)
+        self.assertFalse(self.created[0].commands)
+        self.assertFalse(self.created_grippers)
+        self.assertEqual(self.created[0].stops, 1)
+
+    def test_different_active_tool_switches_to_configured_tool(self) -> None:
+        with (
+            patch.object(sys.modules["flexivrdk"].Tool, "name", return_value="Flange"),
+            patch.object(sys.modules["flexivrdk"].Tool, "Switch") as switch,
+        ):
+            self.robot.connect(with_cameras=False)
+        self.assertEqual(switch.call_args_list, [call("Teleop-GN01"), call("Teleop-GN01")])
 
     def test_arm_only_connection_does_not_open_cameras(self):
         self.robot.connect(with_cameras=False)

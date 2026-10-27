@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Choose a downloaded RTC-full checkpoint, then use the copied Flexiv deployment.
+# Choose an experiment folder and checkpoint for the RTC deployment.
 set -euo pipefail
 
 task_deployment_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,13 +20,28 @@ if [[ ! -x "$task_python" ]]; then
     exit 1
 fi
 task_checkpoint_args=()
-if [[ "${1:-}" =~ ^[0-9]+$ || "${1:-}" == last ]]; then
-    task_step="$1"
-    case "$task_step" in
-        030000|040000|045000|050000|last) ;;
-        *) printf '%s\n' 'Choose 030000, 040000, 045000, 050000 or last.' >&2; exit 1 ;;
-    esac
-    task_checkpoint_args=(--checkpoint "$task_deployment_dir/../checkpoints/rtc_full/$task_step/pretrained_model")
+if [[ -n "${1:-}" && "${1:-}" != -* ]]; then
+    task_checkpoint_group=rtc_full
+    if [[ ! "$1" =~ ^[0-9]+$ && "$1" != last ]]; then
+        task_checkpoint_group="$1"
+        if [[ "$task_checkpoint_group" == .* || "$task_checkpoint_group" == */* ||
+              ! -d "$task_deployment_dir/../checkpoints/$task_checkpoint_group" ]]; then
+            printf 'Unknown checkpoint folder: %s\n' "$task_checkpoint_group" >&2
+            exit 1
+        fi
+        shift
+    fi
+    task_step="${1:-}"
+    if [[ ! "$task_step" =~ ^[0-9]+$ && "$task_step" != last ]]; then
+        printf '%s\n' 'Usage: bash run.sh [<folder>] <step|last> [deployment options]' >&2
+        exit 1
+    fi
+    task_checkpoint="$task_deployment_dir/../checkpoints/$task_checkpoint_group/$task_step/pretrained_model"
+    if [[ ! -d "$task_checkpoint" ]]; then
+        printf 'Checkpoint directory not found: %s\n' "$task_checkpoint" >&2
+        exit 1
+    fi
+    task_checkpoint_args=(--checkpoint "$task_checkpoint")
     shift
 fi
 export TOKENIZERS_PARALLELISM=false
