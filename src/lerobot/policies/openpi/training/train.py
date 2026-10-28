@@ -53,7 +53,7 @@ def read_config(path):
 
 
 def configure_world_size(config, world_size):
-    """Repartition the global batch while preserving steps per sampler epoch."""
+    """Repartition the global batch across the requested DDP ranks."""
     if world_size not in (2, 4):
         raise ValueError("Only two or four DDP ranks are supported.")
     global_batch = config["batch_size"] * config["parallelism"]["dp_replicate"]

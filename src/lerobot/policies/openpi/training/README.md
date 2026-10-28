@@ -110,6 +110,20 @@ tail -f /mnt/work/dakun/outputs/openpi_pi05_dualarm_fold_towel_rtc_full/resume_1
 
 也可以通过通用入口 `--resume latest` 自动选检查点，或 `--resume CHECKPOINT_DIR`
 指定检查点。自动选择仅检查必要文件存在且非空，正式恢复仍由 PyTorch 校验内容。
+### 双卡续训
+
+通用启动脚本支持两张或四张可见 GPU。四卡每卡 batch 8 切为双卡每卡 16，
+保持全局 batch 32，并恢复模型、优化器、step、epoch 和 batch offset。
+卡数变化后随机抽样不与四卡逐位一致；新 checkpoint 保存实际双卡配置。
+先退出旧训练，再执行：
+
+```bash
+cd /mnt/work/dakun/lerobot/src/lerobot/policies/openpi
+tmux new-session -s pi05-2gpu 'env CUDA_VISIBLE_DEVICES=4,5 MASTER_PORT=29525 bash training/train_dualarm_fold_towel_rtc_full.sh --resume /mnt/work/dakun/outputs/openpi_pi05_dualarm_fold_towel_rtc_full/checkpoints/045000 2>&1 | tee -a /mnt/work/dakun/outputs/openpi_pi05_dualarm_fold_towel_rtc_full/resume_2gpu.log'
+```
+
+按 `Ctrl+b` 后按 `d` 脱离会话，`tmux attach -t pi05-2gpu` 返回。
+每卡 batch 16 的显存需求需正式运行确认。回退后原 CSV 会追加重复 step，分析时取最后一条。
 
 ## 环境
 
