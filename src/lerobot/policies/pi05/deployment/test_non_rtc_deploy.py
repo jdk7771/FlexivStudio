@@ -71,7 +71,7 @@ class TestNonRTCEntry(unittest.TestCase):
             deploy_main()
         self.assertEqual(inspect.call_args.kwargs, {"rtc": False})
         cfg = inspect.call_args.args[0]
-        self.assertIn("DualArm_FoldTowel_pi05_no_rtc_full_gpu7_6_5_4/025000", cfg["checkpoint"])
+        self.assertIn("DualArm_FoldTowel_pi05_no_rtc_full/025000", cfg["checkpoint"])
         self.assertTrue(cfg["telemetry"].endswith("DualArm_FoldTowel_no_rtc_full.jsonl"))
         self.assertNotIn("rtc_execution_horizon", cfg)
         require_rdk.assert_not_called()
@@ -253,12 +253,18 @@ class TestNonRTCInference(unittest.TestCase):
         self.robot.send_action.assert_not_called()
         self.assertEqual(len(self.queue), 0)
 
-    def _execute(self, run_mode: str = "continuous", answers: list[str] | None = None) -> None:
+    def _execute(
+        self,
+        run_mode: str = "continuous",
+        answers: list[str] | None = None,
+        *,
+        home_error: Exception | None = None,
+    ) -> None:
         with (
             tempfile.TemporaryDirectory() as directory,
             patch("flexiv_deploy_hardware.FlexivDualArm", return_value=self.robot),
             patch("lerobot.inference.SyncInferenceEngine", return_value=self.engine),
-            patch("deploy_dualarm_no_rtc.align_start_pose"),
+            patch("deploy_dualarm_no_rtc.align_deployment_start_pose", side_effect=home_error),
             patch(
                 "deploy_dualarm_no_rtc.time.sleep",
                 side_effect=lambda seconds: self.clock.__setitem__(0, self.clock[0] + seconds),
@@ -272,6 +278,14 @@ class TestNonRTCInference(unittest.TestCase):
 
     def test_cancel_at_home_prevents_policy_start(self) -> None:
         self._execute(answers=["q"])
+        self.assertEqual(self.predictions, 0)
+        self.robot.send_action.assert_not_called()
+        self.robot.wait_for_fresh_observation.assert_not_called()
+        self.robot.close.assert_called_once()
+
+    def test_failed_home_prevents_prediction_and_closes_devices(self) -> None:
+        with self.assertRaisesRegex(TimeoutError, "home failed"):
+            self._execute(home_error=TimeoutError("home failed"))
         self.assertEqual(self.predictions, 0)
         self.robot.send_action.assert_not_called()
         self.robot.wait_for_fresh_observation.assert_not_called()

@@ -1,0 +1,2 @@
+# New deployment wrappers follow the host LeRobot repository's checks.
+extend = "../../../../../pyproject.toml"

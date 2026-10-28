@@ -16,6 +16,7 @@ from typing import Any
 
 from deployment_recording import DeploymentLog, add_recording_arguments, configure_recording
 from flexiv_deploy_contract import ACTION_NAMES, CAMERA_NAMES, inspect_checkpoint, read_json
+from go_home_path import align_deployment_start_pose
 
 LOGGER = logging.getLogger(__name__)
 START_POSE_SETTLE_S = 2.0
@@ -79,7 +80,10 @@ def choose_checkpoint(models_root: Path) -> Path | None:
         raise FileNotFoundError(f"No local checkpoints found under {models_root}")
     print(f"\n选择 {models_root.name} 的 checkpoint：", flush=True)
     for index, (experiment, step, path, kind) in enumerate(choices, 1):
-        print(f"  {index}. {experiment}  step {step:,}  {kind}  {path}", flush=True)
+        model = read_json(path / "config.json")
+        freeze_vision = model.get("freeze_vision_encoder")
+        vision = {True: "视觉冻结", False: "视觉参与训练", None: "视觉训练状态未记录"}[freeze_vision]
+        print(f"  {index}. {experiment}  step {step:,}  {kind}  {vision}  {path}", flush=True)
     while True:
         try:
             answer = input("输入编号（q 退出）：").strip().lower()
@@ -324,6 +328,7 @@ def dispatch_single_step(engine: Any, robot: Any, cfg: dict) -> tuple[dict, Any,
 
 
 def align_start_pose(robot: Any, start_pose: tuple[Any, dict], *, close_grippers: bool = False) -> None:
+    """Legacy joint interpolation for recorded-data replay, not model deployment."""
     import numpy as np
 
     initial, source = start_pose
@@ -396,7 +401,7 @@ def execute(
             "RTC engine prepared before device connection in %.2f s", time.monotonic() - engine_init_start
         )
         robot.connect()
-        align_start_pose(robot, start_pose)
+        align_deployment_start_pose(robot, cfg, start_pose)
         LOGGER.info("Initial pose reached; waiting %.1f s to settle before inference", START_POSE_SETTLE_S)
         time.sleep(START_POSE_SETTLE_S)
         if run_mode == "continuous":
@@ -553,6 +558,11 @@ def main() -> None:
         cfg["tokenizer"] = str(Path(cfg["checkpoint"]) / "tokenizer")
     description = inspect_checkpoint(cfg)
     LOGGER.info("Checkpoint files valid: %s (%s)", cfg["checkpoint"], description["kind"])
+    LOGGER.info(
+        "Saved training configuration: freeze_vision_encoder=%s, train_expert_only=%s",
+        description.get("model_config", {}).get("freeze_vision_encoder"),
+        description.get("model_config", {}).get("train_expert_only"),
+    )
     if args.check:
         LOGGER.info("File checks complete. No model loaded, no devices connected.")
         return

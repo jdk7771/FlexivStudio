@@ -21,7 +21,7 @@ if [[ ! -x "$task_python" ]]; then
 fi
 task_checkpoint_args=()
 if [[ -n "${1:-}" && "${1:-}" != -* ]]; then
-    task_checkpoint_group=DualArm_FoldTowel_pi05_no_rtc_full_gpu7_6_5_4
+    task_checkpoint_group=DualArm_FoldTowel_pi05_no_rtc_full
     if [[ ! "$1" =~ ^[0-9]+$ && "$1" != last ]]; then
         task_checkpoint_group="$1"
         if [[ "$task_checkpoint_group" == .* || "$task_checkpoint_group" == */* ||

@@ -55,9 +55,10 @@ def write_tensors(path: Path, names: list[str]) -> None:
 
 
 def mock_configuration() -> dict:
-    """Keep mocked controller tests independent of user-selected live torque limits."""
+    """Keep mocked controller tests independent of user-selected live controller settings."""
     cfg = read_json(Path(__file__).with_name("deploy_config.json"))
     cfg["hardware"]["control_mode"] = "NRT_JOINT_POSITION"
+    cfg["hardware"]["max_target_error_rad"] = 0.25
     for side in ("left", "right"):
         cfg["hardware"]["arms"][side]["max_contact_torque_nm"] = None
     return cfg
@@ -307,6 +308,18 @@ class TestCheckpointMenu(unittest.TestCase):
             selected = choose_checkpoint(self.rtc_root)
         self.assertEqual(selected, self.rtc_root / "045000/pretrained_model")
 
+    def test_menu_reads_vision_training_status_from_saved_config(self) -> None:
+        for step, frozen in (("050000", True), ("045000", False)):
+            (self.rtc_root / step / "pretrained_model/config.json").write_text(
+                json.dumps({"freeze_vision_encoder": frozen})
+            )
+        output = io.StringIO()
+        with patch("builtins.input", return_value="q"), redirect_stdout(output):
+            choose_checkpoint(self.rtc_root)
+        lines = output.getvalue().splitlines()
+        self.assertTrue(any("step 50,000" in line and "视觉冻结" in line for line in lines))
+        self.assertTrue(any("step 45,000" in line and "视觉参与训练" in line for line in lines))
+
     def test_empty_root_reports_no_checkpoints(self) -> None:
         with self.assertRaisesRegex(FileNotFoundError, "No local checkpoints"):
             choose_checkpoint(self.root / "missing")
@@ -515,7 +528,7 @@ class TestStepDispatch(unittest.TestCase):
 class TestGoHome(unittest.TestCase):
     def setUp(self) -> None:
         self.enterContext(patch("goHome.read_home_tcp", return_value=np.zeros((2, 7))))
-        self.enterContext(patch("goHome.plan_home"))
+        self.enterContext(patch("go_home_path.plan_home"))
 
     def test_check_only_reads_first_frame_without_connecting(self):
         start_pose = (np.zeros(16), {"scene": "scene_0001", "timestamp_ms": 150.0})
@@ -538,7 +551,7 @@ class TestGoHome(unittest.TestCase):
             patch("goHome.read_start_pose", return_value=start_pose),
             patch("goHome.require_compatible_rdk"),
             patch("goHome.FlexivDualArm") as robot_class,
-            patch("goHome.execute_home") as align,
+            patch("go_home_path.execute_home") as align,
         ):
             robot = robot_class.return_value
             robot.check_initial_pose.return_value = (np.zeros(16), 0.0)
@@ -575,7 +588,7 @@ class TestGoHome(unittest.TestCase):
             ),
             patch("goHome.require_compatible_rdk"),
             patch("goHome.FlexivDualArm") as robot_class,
-            patch("goHome.execute_home") as align,
+            patch("go_home_path.execute_home") as align,
         ):
             robot = robot_class.return_value
             robot.check_initial_pose.return_value = (np.zeros(16), 0.0)
@@ -640,7 +653,7 @@ class TestTransforms(unittest.TestCase):
         np.testing.assert_array_equal(image[112, 112], [255, 0, 0])
 
     def test_targets_are_absolute_and_bad_targets_fail_before_dispatch(self):
-        cfg = read_json(Path(__file__).with_name("deploy_config.json"))["hardware"]
+        cfg = mock_configuration()["hardware"]
         measured = pack_state(np.full(7, 0.5), 0.03, np.full(7, -0.5), 0.08)
         action = measured.copy()
         action[0], action[7] = 0.6, 0.12
@@ -650,6 +663,21 @@ class TestTransforms(unittest.TestCase):
         for bad in (np.full(16, np.nan), np.zeros(32), np.full(16, 20)):
             with self.assertRaises(ValueError):
                 validate_target(bad, measured, np.full(14, -3), np.full(14, 3), cfg)
+
+    def test_tracking_error_identifies_both_arms_and_configured_limit(self) -> None:
+        cfg = mock_configuration()["hardware"]
+        cfg["max_target_error_rad"] = 0.1
+        measured = pack_state(np.full(7, 0.5), 0.03, np.full(7, -0.5), 0.08)
+        action = measured.copy()
+        action[1] += 0.12
+        action[13] -= 0.2
+        with self.assertRaises(ValueError) as caught:
+            validate_target(action, measured, np.full(14, -3), np.full(14, 3), cfg)
+        message = str(caught.exception)
+        self.assertIn("max_error=0.20000 rad (limit=0.10000 rad)", message)
+        self.assertIn("left A2: measured=0.50000, target=0.62000, error=0.12000 rad", message)
+        self.assertIn("right A6: measured=-0.50000, target=-0.70000, error=0.20000 rad", message)
+        self.assertIn("target rejected before dispatch", message)
 
 
 class TestExecutionInitialization(unittest.TestCase):
@@ -682,8 +710,11 @@ class TestExecutionInitialization(unittest.TestCase):
             )
         )
         self.enterContext(patch("flexiv_deploy_hardware.FlexivDualArm", return_value=self.robot))
-        self.enterContext(
-            patch("deploy_dualarm.align_start_pose", side_effect=lambda *_: self.order.append("align"))
+        self.align = self.enterContext(
+            patch(
+                "deploy_dualarm.align_deployment_start_pose",
+                side_effect=lambda *_: self.order.append("align"),
+            )
         )
         self.enterContext(
             patch(
@@ -738,6 +769,16 @@ class TestExecutionInitialization(unittest.TestCase):
         with patch("builtins.input", return_value="q"):
             self._run()
         self._assert_cancelled_at_home()
+
+    def test_failed_home_prevents_policy_start_and_closes_devices(self) -> None:
+        self.align.side_effect = TimeoutError("home failed")
+        with self.assertRaisesRegex(TimeoutError, "home failed"):
+            self._run()
+        self.engine.start.assert_not_called()
+        self.engine.resume.assert_not_called()
+        self.robot.wait_for_fresh_observation.assert_not_called()
+        self.robot.close.assert_called_once()
+        self.engine.stop.assert_called_once()
 
     def test_recorder_starts_before_devices_and_drains_after_stop_even_on_cleanup_error(self) -> None:
         order: list[str] = []
@@ -1357,9 +1398,10 @@ class TestMockedHardware(unittest.TestCase):
             patch("goHome.read_json", return_value=self.deploy_cfg),
             patch("goHome.read_start_pose", return_value=start_pose),
             patch("goHome.read_home_tcp", return_value=np.zeros((2, 7))),
-            patch("goHome.plan_home"),
+            patch("go_home_path.plan_home"),
             patch(
-                "goHome.execute_home", side_effect=lambda robot, cfg, target, plan: robot.send_action(target)
+                "go_home_path.execute_home",
+                side_effect=lambda robot, cfg, target, plan: robot.send_action(target),
             ),
             patch("goHome.require_compatible_rdk"),
             patch("builtins.input", side_effect=AssertionError("unexpected prompt")),

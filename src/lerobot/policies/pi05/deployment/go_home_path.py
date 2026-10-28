@@ -17,9 +17,17 @@ LOGGER = logging.getLogger(__name__)
 POSITION_STEP_M = 0.005
 ROTATION_STEP_RAD = 0.03
 POSITION_TOLERANCE_M = 0.003
+# Allow the previous waypoint's arrival error plus a transient tracking deviation.
+# This motion guard does not relax the 3 mm requirement for accepting a waypoint.
+HEIGHT_CORRIDOR_TOLERANCE_M = 0.006
 ORIENTATION_TOLERANCE_RAD = 0.03
 FINAL_IK_MATCH_RAD = 0.002
-TCP_SPEED_M_S = 0.075
+MAX_IK_SUBDIVISIONS = 8
+MAX_HOME_WAYPOINTS = 4096
+TCP_SPEED_M_S = 0.10
+DEFAULT_LIFT_M = 0.10
+CLOSED_GRIPPER_TOLERANCE_M = 0.001
+GRIPPER_MOVE_TIMEOUT_S = 10.0
 JOINTS = np.r_[0:7, 8:15]
 
 
@@ -199,11 +207,19 @@ def plan_home(
                 f"{('left', 'right')[index]} home TCP does not match recorded joints/tool calibration; no return motion sent"
             )
     previous = start.copy()
+    previous_poses = current.copy()
     descend_seed = start.copy()
-    waypoints = []
-    for stage, fraction, desired in poses:
+    waypoints: list[Waypoint] = []
+    subdivisions = 0
+
+    def append_waypoint(
+        stage: str, fraction: float, desired: np.ndarray, previous_fraction: float, depth: int = 0
+    ) -> None:
+        nonlocal previous, previous_poses, subdivisions
         waypoint = target.copy()
+        excessive_steps = []
         for index, offset in enumerate((0, 8)):
+            side = ("left", "right")[index]
             seed = previous[offset : offset + 7]
             if stage == "descend":
                 seed = (1 - fraction) * descend_seed[offset : offset + 7] + fraction * target[
@@ -213,7 +229,7 @@ def plan_home(
             q = np.asarray(solution, dtype=np.float64)
             if not ok or q.shape != (7,) or not np.isfinite(q).all():
                 raise ValueError(
-                    f"{('left', 'right')[index]} {stage} waypoint is unreachable; no return motion sent"
+                    f"{side} {stage} waypoint ({fraction:.2%} of stage) is unreachable; no return motion sent"
                 )
             if np.any(q < np.asarray(infos[index].q_min)) or np.any(q > np.asarray(infos[index].q_max)):
                 raise ValueError("Home IK exceeds joint limits; no return motion sent")
@@ -223,24 +239,89 @@ def plan_home(
                         "Home IK final posture differs from recorded joints; no return motion sent"
                     )
                 q = target[offset : offset + 7].copy()
-            if np.max(np.abs(q - previous[offset : offset + 7])) > cfg["start_pose"]["waypoint_step_rad"]:
-                raise ValueError(
-                    f"Home IK branch jump or excessive joint step during {stage}; no return motion sent"
+            delta = np.abs(q - previous[offset : offset + 7])
+            limit = cfg["start_pose"]["waypoint_step_rad"]
+            for joint in np.flatnonzero(delta > limit):
+                excessive_steps.append(
+                    f"{side} A{joint + 1}: previous={previous[offset + joint]:.5f}, "
+                    f"next={q[joint]:.5f}, delta={delta[joint]:.5f} rad (limit {limit:.5f})"
                 )
             waypoint[offset : offset + 7] = q
+        if excessive_steps:
+            if depth >= MAX_IK_SUBDIVISIONS:
+                raise ValueError(
+                    f"Home IK branch jump or excessive joint step during {stage} "
+                    f"({fraction:.2%} of stage), still exceeds the limit after "
+                    f"{MAX_IK_SUBDIVISIONS} subdivisions; {'; '.join(excessive_steps)}; "
+                    "no return motion sent"
+                )
+            midpoint = np.asarray(
+                [interpolate_pose(a, b, 0.5) for a, b in zip(previous_poses, desired, strict=True)]
+            )
+            midpoint_fraction = (previous_fraction + fraction) / 2
+            subdivisions += 1
+            append_waypoint(stage, midpoint_fraction, midpoint, previous_fraction, depth + 1)
+            # Re-solve against the accepted midpoint rather than reuse the large-step solution.
+            append_waypoint(stage, fraction, desired, midpoint_fraction, depth + 1)
+            return
+        if len(waypoints) >= MAX_HOME_WAYPOINTS:
+            raise ValueError(f"Home IK path exceeds {MAX_HOME_WAYPOINTS} waypoints; no return motion sent")
         waypoints.append(Waypoint(stage, fraction, desired, waypoint))
         previous = waypoint
+        previous_poses = desired
+
+    previous_stage = None
+    previous_fraction = 0.0
+    for stage, fraction, desired in poses:
+        if stage != previous_stage:
+            previous_fraction = 0.0
+        append_waypoint(stage, fraction, desired, previous_fraction)
+        previous_fraction = fraction
+        previous_stage = stage
         if stage != "descend":
             descend_seed = previous.copy()
     if np.max(np.abs(robot.read_state()[JOINTS] - start[JOINTS])) > cfg["start_pose"]["joint_tolerance_rad"]:
         raise ValueError("Followers moved during home planning; restart to replan")
     LOGGER.info(
-        "Home path preflight passed: %d waypoints; left/right clearance Z %.3f / %.3f m",
+        "Home path preflight passed: %d waypoints, %d IK subdivisions; left/right clearance Z %.3f / %.3f m",
         len(waypoints),
+        subdivisions,
         np.max([p[2][:, 2] for p in poses], axis=0)[0],
         np.max([p[2][:, 2] for p in poses], axis=0)[1],
     )
     return HomePlan(start.copy(), current, waypoints)
+
+
+def check_height_corridor(
+    actual: np.ndarray,
+    previous: np.ndarray,
+    point: Waypoint,
+    point_index: int,
+    point_count: int,
+    *,
+    before_command: bool = False,
+) -> None:
+    nominal_floor = np.minimum(previous[:, 2], point.poses[:, 2])
+    floor = nominal_floor - HEIGHT_CORRIDOR_TOLERANCE_M
+    below = np.flatnonzero(actual[:, 2] < floor)
+    if not len(below):
+        return
+    details = []
+    for index in below:
+        details.append(
+            f"{('left', 'right')[index]}: actual Z={actual[index, 2]:.5f} m, "
+            f"planned minimum Z={nominal_floor[index]:.5f} m, lower limit Z={floor[index]:.5f} m, "
+            f"downward deviation={(nominal_floor[index] - actual[index, 2]) * 1000:.2f} mm "
+            f"(limit {HEIGHT_CORRIDOR_TOLERANCE_M * 1000:.2f} mm), "
+            f"previous/target Z={previous[index, 2]:.5f}/{point.poses[index, 2]:.5f} m"
+        )
+    when = "before command" if before_command else "during motion"
+    message = (
+        f"Home {point.stage} waypoint {point_index}/{point_count} ({point.fraction:.1%} of stage), "
+        f"{when}: TCP dropped below the planned height corridor; {'; '.join(details)}; stopping"
+    )
+    LOGGER.error(message)
+    raise RuntimeError(message)
 
 
 def execute_home(robot: Any, cfg: dict, target: np.ndarray, plan: HomePlan) -> None:
@@ -250,6 +331,11 @@ def execute_home(robot: Any, cfg: dict, target: np.ndarray, plan: HomePlan) -> N
     ):
         raise ValueError("Followers moved after home planning; restart to replan")
     deadline = time.monotonic() + cfg["start_pose"]["timeout_s"]
+    LOGGER.info(
+        "Home tracking: waypoint position tolerance %.1f mm; height corridor downward limit %.1f mm",
+        POSITION_TOLERANCE_M * 1000,
+        HEIGHT_CORRIDOR_TOLERANCE_M * 1000,
+    )
     previous_poses = plan.start_poses
     stage = None
     for point_index, point in enumerate(plan.waypoints, start=1):
@@ -257,16 +343,15 @@ def execute_home(robot: Any, cfg: dict, target: np.ndarray, plan: HomePlan) -> N
             stage = point.stage
             LOGGER.info("Home stage: %s", stage)
         started = time.monotonic()
-        floor = np.minimum(previous_poses[:, 2], point.poses[:, 2]) - POSITION_TOLERANCE_M
-        if np.any(current_tcp(robot)[:, 2] < floor):
-            raise RuntimeError(f"Home {stage}: TCP below the planned height corridor; stopping")
+        check_height_corridor(
+            current_tcp(robot), previous_poses, point, point_index, len(plan.waypoints), before_command=True
+        )
         robot.send_action(point.joints)
         next_report = started + 1.0
         while True:
             measured = robot.read_state()
             actual = current_tcp(robot)
-            if np.any(actual[:, 2] < floor):
-                raise RuntimeError(f"Home {stage}: TCP dropped below the planned height corridor; stopping")
+            check_height_corridor(actual, previous_poses, point, point_index, len(plan.waypoints))
             position_errors = np.linalg.norm(actual[:, :3] - point.poses[:, :3], axis=1)
             rotation_errors = np.asarray(
                 [orientation_error(a[3:], b[3:]) for a, b in zip(actual, point.poses, strict=True)]
@@ -326,3 +411,62 @@ def execute_home(robot: Any, cfg: dict, target: np.ndarray, plan: HomePlan) -> N
     robot.wait_for_target(
         target, cfg["action_timeout_s"], grippers=False, operation="Raised home final joints"
     )
+
+
+def return_to_home(
+    robot: Any,
+    cfg: dict,
+    recorded: np.ndarray,
+    tcp: np.ndarray,
+    lift_m: float = DEFAULT_LIFT_M,
+    *,
+    skip_if_close: bool = False,
+) -> None:
+    """Return via the shared raised path, optionally accepting joints already within home tolerance."""
+    validate_lift(lift_m)
+    initial = np.asarray(recorded, dtype=np.float64).copy()
+    initial[[7, 15]] = cfg["hardware"]["gripper_min_m"]
+    # A raised path can start farther away than the legacy joint interpolation limit.
+    # Joint limits and the complete IK path are still checked before any command.
+    measured, distance = robot.check_initial_pose(initial, enforce_distance_limit=False)
+    LOGGER.info("Raised home: initial max joint difference %.3f rad", distance)
+    tolerance = cfg["start_pose"]["joint_tolerance_rad"]
+    if skip_if_close and distance <= tolerance:
+        LOGGER.info(
+            "Already near home: max joint error %.5f rad <= %.5f rad; skipping raised return",
+            distance,
+            tolerance,
+        )
+        if np.max(np.abs(measured[[7, 15]] - initial[[7, 15]])) <= CLOSED_GRIPPER_TOLERANCE_M:
+            LOGGER.info("Both grippers already closed; no home commands sent")
+            return
+    else:
+        open_pose = initial.copy()
+        open_pose[[7, 15]] = cfg["hardware"]["gripper_max_m"]
+        plan = plan_home(robot, cfg, open_pose, tcp, lift_m, enforce_start_distance=False)
+        opening = measured.copy()
+        opening[[7, 15]] = cfg["hardware"]["gripper_max_m"]
+        applied = robot.send_action(opening, force_gripper_command=True)
+        robot.wait_for_target(applied, GRIPPER_MOVE_TIMEOUT_S, operation="Opening both grippers")
+        LOGGER.info("Both grippers opened; starting raised return path")
+        execute_home(robot, cfg, open_pose, plan)
+    closing = robot.read_state().copy()
+    closing[[7, 15]] = initial[[7, 15]]
+    robot.send_action(closing, force_gripper_command=True)
+    LOGGER.info("Arms reached the first joint pose; closing both grippers")
+    left_width, right_width = robot.wait_for_grippers_closed(
+        tolerance_m=CLOSED_GRIPPER_TOLERANCE_M, timeout_s=GRIPPER_MOVE_TIMEOUT_S
+    )
+    LOGGER.info(
+        "Both followers reached the first joint pose; RDK gripper widths: left %.4f m, right %.4f m",
+        left_width,
+        right_width,
+    )
+
+
+def align_deployment_start_pose(robot: Any, cfg: dict, start_pose: tuple[Any, dict]) -> None:
+    """Return to the recorded home before either RTC or synchronous policy execution."""
+    recorded, source = start_pose
+    tcp = read_home_tcp(cfg, source)
+    LOGGER.info("Collection first frame: %s at %.1f ms", source["scene"], source["timestamp_ms"])
+    return_to_home(robot, cfg, recorded, tcp, skip_if_close=True)

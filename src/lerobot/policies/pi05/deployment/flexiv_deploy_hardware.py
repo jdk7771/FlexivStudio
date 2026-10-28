@@ -52,8 +52,22 @@ def validate_target(
     joints = np.r_[0:7, 8:15]
     if np.any(target[joints] < joint_min) or np.any(target[joints] > joint_max):
         raise ValueError("Joint target exceeds RDK joint limits")
-    if np.max(np.abs(target[joints] - measured[joints])) > cfg["max_target_error_rad"]:
-        raise ValueError("Joint target too far from measured pose; check starting pose/model/units")
+    errors = np.abs(target[joints] - measured[joints])
+    limit = cfg["max_target_error_rad"]
+    if np.max(errors) > limit:
+        details = []
+        for index in np.flatnonzero(errors > limit):
+            joint = joints[index]
+            side = "left" if index < 7 else "right"
+            details.append(
+                f"{side} A{index % 7 + 1}: measured={measured[joint]:.5f}, "
+                f"target={target[joint]:.5f}, error={errors[index]:.5f} rad"
+            )
+        raise ValueError(
+            "Joint target too far from measured pose; "
+            f"max_error={np.max(errors):.5f} rad (limit={limit:.5f} rad); "
+            f"{'; '.join(details)}; target rejected before dispatch"
+        )
     # Small unnormalization overshoots are clipped only for physical gripper width.
     target[[7, 15]] = np.clip(target[[7, 15]], cfg["gripper_min_m"], cfg["gripper_max_m"])
     return target
@@ -409,8 +423,8 @@ class FlexivDualArm:
     ) -> tuple[np.ndarray, float]:
         """Validate a pose and optionally enforce the deployment start-distance limit.
 
-        The gohome path plans a raised, collision-aware route from the robot's
-        actual TCP pose, so it must be allowed to start farther from the
+        The gohome path plans a raised TCP route with IK checks from the robot's
+        actual pose, so it must be allowed to start farther from the
         recorded pose than the normal policy alignment path.  Other callers
         keep the distance check enabled by default.
         """

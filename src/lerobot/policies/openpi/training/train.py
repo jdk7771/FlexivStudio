@@ -221,6 +221,8 @@ def train(config, resume):
         step, epoch, offset = saved["step"], saved["epoch"], saved["batch_offset"]
         saved_rng = saved["rng"][rank]
         del saved
+        logging.info("Rank %d: resumed %s at step=%d/%d epoch=%d batch_offset=%d; next_lr=%.9g",
+                     rank, weights, step, config["steps"], epoch, offset, learning_rate(step, p))
     ddp = torch.nn.parallel.DistributedDataParallel(
         model, device_ids=[local_rank], find_unused_parameters=True, gradient_as_bucket_view=False,
     )

@@ -13,7 +13,7 @@ ALOHA/LIBERO 仿真子模块不用于这次真实机器人数据训练。
 ## 启动
 
 ```bash
-cd /home/dakun/dakun/lerobot/src/lerobot/policies/openpi
+cd /mnt/work/dakun/lerobot/src/lerobot/policies/openpi
 
 # 只打印命令，不加载模型、不占 GPU
 bash training/train_dualarm_fold_towel_rtc_full.sh --print-command
@@ -79,6 +79,37 @@ bash training/train_dualarm_fold_towel_rtc_full.sh --resume \
 
 续训自动使用检查点的 `train_config.json`，并恢复对应 epoch 的 batch 位置。
 不要把 openpi 检查点直接交给 LeRobot 的 `lerobot-train --resume`。
+
+### 从 1020 切到 1024 的 GPU 0、1、2、3 续训
+
+两台机器通过 `/mnt/work/dakun` 访问共享文件，现有 `.venv` 在当前 1024 实例可用。
+专用启动脚本固定使用物理 GPU `0,1,2,3`、默认端口 `29524`，自动选择输出目录中
+编号最大的完整检查点，忽略 `.incomplete` 目录，并读取该检查点的原始配置。
+恢复模型、AdamW 状态、绝对 step 对应的学习率、四个 rank 的 RNG 和数据 batch 位置；
+每卡 batch 8，全局 batch 32，继续到总计 50000 步。
+
+2026-10-27 检查时，最新完整检查点为 `007500`，日志最后记录为 7600；
+这次从第 7500 步恢复，未保存的约 100 步需重新计算。原有 CSV 采用追加写入，
+所以此前 7550、7600 的记录会保留，分析曲线时同 step 应取最后一条。
+
+```bash
+cd /mnt/work/dakun/lerobot/src/lerobot/policies/openpi
+
+# 预览恢复路径和四卡启动命令，不启动训练
+bash training/resume_dualarm_fold_towel_rtc_full_1024.sh --print-command
+
+# 前台续训（由你执行）
+bash training/resume_dualarm_fold_towel_rtc_full_1024.sh
+
+# 或后台续训：与上面的前台命令二选一
+nohup bash training/resume_dualarm_fold_towel_rtc_full_1024.sh \
+  > /mnt/work/dakun/outputs/openpi_pi05_dualarm_fold_towel_rtc_full/resume_1024.log 2>&1 &
+echo $!
+tail -f /mnt/work/dakun/outputs/openpi_pi05_dualarm_fold_towel_rtc_full/resume_1024.log
+```
+
+也可以通过通用入口 `--resume latest` 自动选检查点，或 `--resume CHECKPOINT_DIR`
+指定检查点。自动选择仅检查必要文件存在且非空，正式恢复仍由 PyTorch 校验内容。
 
 ## 环境
 

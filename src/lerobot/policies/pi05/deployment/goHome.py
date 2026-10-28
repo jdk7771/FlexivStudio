@@ -10,11 +10,9 @@ from pathlib import Path
 from deploy_dualarm import read_start_pose, require_compatible_rdk
 from flexiv_deploy_contract import read_json, validate_settings
 from flexiv_deploy_hardware import FlexivDualArm
-from go_home_path import TCP_SPEED_M_S, execute_home, plan_home, read_home_tcp, validate_lift
+from go_home_path import DEFAULT_LIFT_M, TCP_SPEED_M_S, read_home_tcp, return_to_home, validate_lift
 
 LOGGER = logging.getLogger(__name__)
-CLOSED_GRIPPER_TOLERANCE_M = 0.001
-GRIPPER_MOVE_TIMEOUT_S = 10.0
 
 
 def main() -> None:
@@ -23,7 +21,7 @@ def main() -> None:
     parser.add_argument(
         "--lift-m",
         type=float,
-        default=0.10,
+        default=DEFAULT_LIFT_M,
         help="Clearance above home TCP Z; keep current height if higher (meters)",
     )
     parser.add_argument(
@@ -62,29 +60,7 @@ def main() -> None:
     robot = FlexivDualArm(cfg["hardware"], start_pose=cfg["start_pose"])
     try:
         robot.connect(with_cameras=False)
-        # Check the complete return pose before issuing any gripper command.
-        measured, _ = robot.check_initial_pose(initial, enforce_distance_limit=False)
-        open_pose = initial.copy()
-        open_pose[[7, 15]] = cfg["hardware"]["gripper_max_m"]
-        plan = plan_home(robot, cfg, open_pose, tcp, args.lift_m, enforce_start_distance=False)
-        opening = measured.copy()
-        opening[[7, 15]] = cfg["hardware"]["gripper_max_m"]
-        applied = robot.send_action(opening, force_gripper_command=True)
-        robot.wait_for_target(applied, GRIPPER_MOVE_TIMEOUT_S, operation="Opening both grippers")
-        LOGGER.info("Both grippers opened; starting raised return path")
-        execute_home(robot, cfg, open_pose, plan)
-        closing = robot.read_state().copy()
-        closing[[7, 15]] = initial[[7, 15]]
-        robot.send_action(closing, force_gripper_command=True)
-        LOGGER.info("Arms reached the first joint pose; closing both grippers")
-        left_width, right_width = robot.wait_for_grippers_closed(
-            tolerance_m=CLOSED_GRIPPER_TOLERANCE_M, timeout_s=GRIPPER_MOVE_TIMEOUT_S
-        )
-        LOGGER.info(
-            "Both followers reached the first joint pose; RDK gripper widths: left %.4f m, right %.4f m",
-            left_width,
-            right_width,
-        )
+        return_to_home(robot, cfg, recorded, tcp, args.lift_m)
     finally:
         robot.close()
 

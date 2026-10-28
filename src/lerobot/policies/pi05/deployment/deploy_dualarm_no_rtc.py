@@ -15,6 +15,7 @@ from typing import Any
 
 from deployment_recording import DeploymentLog, add_recording_arguments, configure_recording
 from flexiv_deploy_contract import ACTION_NAMES, CAMERA_NAMES, inspect_checkpoint, read_json
+from go_home_path import align_deployment_start_pose
 
 LOGGER = logging.getLogger(__name__)
 START_POSE_SETTLE_S = 2.0
@@ -349,35 +350,6 @@ def dispatch_single_step(engine: Any, robot: Any, cfg: dict, policy: Any) -> tup
         engine.reset()
 
 
-def align_start_pose(robot: Any, start_pose: tuple[Any, dict], *, close_grippers: bool = False) -> None:
-    import numpy as np
-
-    initial, source = start_pose
-    measured, distance = robot.check_initial_pose(initial)
-    LOGGER.info(
-        "Collection first frame: %s at %.1f ms; max joint difference %.3f rad",
-        source["scene"],
-        source["timestamp_ms"],
-        distance,
-    )
-    LOGGER.info("Target grippers: left %.4f m, right %.4f m", initial[7], initial[15])
-    LOGGER.info(
-        "Left/right joint difference: %.3f / %.3f rad",
-        np.max(np.abs(initial[:7] - measured[:7])),
-        np.max(np.abs(initial[8:15] - measured[8:15])),
-    )
-    if close_grippers:
-        closing = measured.copy()
-        closing[[7, 15]] = initial[[7, 15]]
-        robot.send_action(closing, force_gripper_command=True)
-        LOGGER.info("Both grippers commanded closed before arm alignment")
-    aligned = robot.move_to_initial_pose(initial)
-    LOGGER.info(
-        "Initial pose reached; max joint error %.3f rad",
-        np.max(np.abs(initial[np.r_[0:7, 8:15]] - aligned[np.r_[0:7, 8:15]])),
-    )
-
-
 def execute(
     cfg: dict,
     policy: Any,
@@ -409,7 +381,7 @@ def execute(
         )
         LOGGER.info("Non-RTC synchronous engine prepared before device connection")
         robot.connect()
-        align_start_pose(robot, start_pose)
+        align_deployment_start_pose(robot, cfg, start_pose)
         LOGGER.info("Initial pose reached; waiting %.1f s to settle before inference", START_POSE_SETTLE_S)
         time.sleep(START_POSE_SETTLE_S)
         if run_mode == "continuous":
@@ -558,6 +530,11 @@ def main() -> None:
         cfg["n_action_steps"] = args.n_action_steps
     description = inspect_checkpoint(cfg, rtc=False)
     LOGGER.info("Checkpoint files valid: %s (%s)", cfg["checkpoint"], description["kind"])
+    LOGGER.info(
+        "Saved training configuration: freeze_vision_encoder=%s, train_expert_only=%s",
+        description.get("model_config", {}).get("freeze_vision_encoder"),
+        description.get("model_config", {}).get("train_expert_only"),
+    )
     if args.check:
         LOGGER.info("File checks complete. No model loaded, no devices connected.")
         return

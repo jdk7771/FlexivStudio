@@ -15,11 +15,13 @@ import numpy as np
 from flexiv_deploy_contract import read_json
 from go_home_path import (
     JOINTS,
+    align_deployment_start_pose,
     checked_pose,
     execute_home,
     plan_home,
     raised_poses,
     read_home_tcp,
+    return_to_home,
     validate_lift,
 )
 
@@ -54,6 +56,7 @@ class FakeFollowers:
                 info=lambda: SimpleNamespace(q_min=[-3.0] * 7, q_max=[3.0] * 7),
             )
         self.wait_for_target = MagicMock()
+        self.wait_for_grippers_closed = MagicMock(return_value=(0.0, 0.0))
 
     def read_state(self) -> np.ndarray:
         return self.q.copy()
@@ -64,9 +67,12 @@ class FakeFollowers:
     def check_initial_pose(
         self, target: np.ndarray, *, enforce_distance_limit: bool = True
     ) -> tuple[np.ndarray, float]:
-        return self.q.copy(), float(np.max(np.abs(self.q[JOINTS] - target[JOINTS])))
+        distance = float(np.max(np.abs(self.q[JOINTS] - target[JOINTS])))
+        if enforce_distance_limit and distance > 1.0:
+            raise ValueError("Initial pose too far")
+        return self.q.copy(), distance
 
-    def send_action(self, target: np.ndarray) -> np.ndarray:
+    def send_action(self, target: np.ndarray, *, force_gripper_command: bool = False) -> np.ndarray:
         self.q = target.copy()
         self.sent.append(target.copy())
         return target.copy()
@@ -148,6 +154,64 @@ class TestRaisedPath(unittest.TestCase):
             previous = waypoint.joints
         np.testing.assert_allclose(plan.waypoints[-1].joints, self.target)
 
+    def test_smooth_ik_with_large_joint_steps_is_refined_without_changing_tcp_path(self) -> None:
+        original = FakeModel.reachable
+        self.target[14] = 0.6
+
+        def curved(
+            model: FakeModel, pose: list[float], seed: list[float], free: bool
+        ) -> tuple[bool, list[float]]:
+            ok, q = original(model, pose, seed, free)
+            if pose[1] > 0:
+                q[6] = 60 * (pose[0] - 0.4) ** 2
+            return ok, q
+
+        current = np.asarray([self.robot.robots[side].states().tcp_pose for side in ("left", "right")])
+        with patch.object(FakeModel, "reachable", curved):
+            plan = plan_home(self.robot, self.cfg, self.target, self.tcp, 0.1)
+        self.assertGreater(len(plan.waypoints), len(raised_poses(current, self.tcp, 0.1)))
+        self.assertFalse(self.robot.sent)
+        previous = self.robot.q
+        previous_poses = current
+        height = np.maximum(current[:, 2], self.tcp[:, 2] + 0.1)
+        for waypoint in plan.waypoints:
+            self.assertLessEqual(np.max(np.abs(waypoint.joints[JOINTS] - previous[JOINTS])), 0.05)
+            self.assertLessEqual(
+                np.max(np.linalg.norm(waypoint.poses[:, :3] - previous_poses[:, :3], axis=1)),
+                0.005 + 1e-12,
+            )
+            if waypoint.stage == "lift":
+                np.testing.assert_allclose(waypoint.poses[:, :2], current[:, :2])
+            elif waypoint.stage == "transfer":
+                np.testing.assert_allclose(waypoint.poses[:, 2], height)
+            else:
+                np.testing.assert_allclose(waypoint.poses[:, :2], self.tcp[:, :2])
+            previous, previous_poses = waypoint.joints, waypoint.poses
+        np.testing.assert_array_equal(plan.waypoints[-1].joints, self.target)
+        np.testing.assert_allclose(plan.waypoints[-1].poses, self.tcp)
+
+    def test_discontinuous_ik_still_fails_before_motion_with_joint_details(self) -> None:
+        original = FakeModel.reachable
+        self.target[14] = 0.2
+
+        def discontinuous(
+            model: FakeModel, pose: list[float], seed: list[float], free: bool
+        ) -> tuple[bool, list[float]]:
+            ok, q = original(model, pose, seed, free)
+            if pose[1] > 0:
+                q[6] = 0.0 if pose[0] < 0.45 else 0.2
+            return ok, q
+
+        with (
+            patch.object(FakeModel, "reachable", discontinuous),
+            self.assertRaisesRegex(
+                ValueError,
+                r"during transfer .*after 8 subdivisions; right A7: .*delta=0\.20000 rad \(limit 0\.05000\)",
+            ),
+        ):
+            plan_home(self.robot, self.cfg, self.target, self.tcp, 0.1)
+        self.assertFalse(self.robot.sent)
+
     def test_unreachable_path_and_ik_branch_jump_fail_before_motion(self) -> None:
         original = FakeModel.reachable
 
@@ -197,6 +261,100 @@ class TestRaisedPath(unittest.TestCase):
         np.testing.assert_array_equal(self.robot.q, self.target)
         self.assertEqual(len(self.robot.sent), len(plan.waypoints))
         self.robot.wait_for_target.assert_called_once()
+
+    def test_deployment_raised_return_accepts_1_002_rad_and_closes_after_reaching_home(self) -> None:
+        self.target[1] = self.robot.q[1] - 1.002
+        self.target[[7, 15]] = 0.05
+        recorded = self.target.copy()
+        tcp = np.asarray([tcp_from_q(self.target[offset : offset + 7]) for offset in (0, 8)])
+        source = {"scene": "scene_0001", "timestamp_ms": 150.0}
+        with self.assertRaisesRegex(ValueError, "too far"):
+            self.robot.check_initial_pose(self.target)
+        clock = [0.0]
+        with (
+            patch("go_home_path.read_home_tcp", return_value=tcp) as read_tcp,
+            patch("go_home_path.time.monotonic", side_effect=lambda: clock[0]),
+            patch(
+                "go_home_path.time.sleep",
+                side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+            ),
+            patch("builtins.input", side_effect=AssertionError("unexpected prompt")),
+        ):
+            align_deployment_start_pose(self.robot, self.cfg, (self.target, source))
+        read_tcp.assert_called_once_with(self.cfg, source)
+        np.testing.assert_array_equal(self.target, recorded)
+        np.testing.assert_allclose(self.robot.q[JOINTS], recorded[JOINTS])
+        np.testing.assert_allclose(self.robot.sent[0][[7, 15]], [0.1, 0.1])
+        np.testing.assert_allclose(self.robot.sent[-2][JOINTS], recorded[JOINTS])
+        np.testing.assert_allclose(self.robot.sent[-2][[7, 15]], [0.1, 0.1])
+        np.testing.assert_allclose(self.robot.sent[-1][[7, 15]], [0.0, 0.0])
+        self.robot.wait_for_grippers_closed.assert_called_once_with(tolerance_m=0.001, timeout_s=10.0)
+
+    def test_return_preflight_failure_sends_no_arm_or_gripper_command(self) -> None:
+        tcp = self.tcp.copy()
+        tcp[:, 0] += 0.02
+        with self.assertRaisesRegex(ValueError, "tool calibration"):
+            return_to_home(self.robot, self.cfg, self.target, tcp)
+        self.assertFalse(self.robot.sent)
+        self.robot.wait_for_target.assert_not_called()
+        self.robot.wait_for_grippers_closed.assert_not_called()
+
+    def test_deployment_near_home_and_closed_grippers_sends_no_home_commands(self) -> None:
+        self.robot.q[[7, 15]] = [0.00072, 0.0]
+        recorded = self.robot.read_state()
+        recorded[[1, 14]] -= 0.019
+        recorded[[7, 15]] = 0.0
+        before = self.robot.read_state()
+        with (
+            patch("go_home_path.read_home_tcp", return_value=self.tcp),
+            patch("go_home_path.plan_home") as plan,
+        ):
+            align_deployment_start_pose(
+                self.robot, self.cfg, (recorded, {"scene": "scene_0001", "timestamp_ms": 150.0})
+            )
+        plan.assert_not_called()
+        self.assertFalse(self.robot.sent)
+        np.testing.assert_array_equal(self.robot.q, before)
+        self.robot.wait_for_grippers_closed.assert_not_called()
+
+    def test_near_home_with_open_grippers_only_closes_at_current_joints(self) -> None:
+        recorded = self.robot.read_state()
+        recorded[14] -= 0.019
+        before = self.robot.read_state()
+        with patch("go_home_path.plan_home") as plan:
+            return_to_home(self.robot, self.cfg, recorded, self.tcp, skip_if_close=True)
+        plan.assert_not_called()
+        self.assertEqual(len(self.robot.sent), 1)
+        np.testing.assert_array_equal(self.robot.sent[0][JOINTS], before[JOINTS])
+        np.testing.assert_array_equal(self.robot.sent[0][[7, 15]], [0.0, 0.0])
+        self.robot.wait_for_grippers_closed.assert_called_once_with(tolerance_m=0.001, timeout_s=10.0)
+
+    def test_right_arm_outside_home_tolerance_still_runs_raised_return(self) -> None:
+        recorded = self.robot.read_state()
+        recorded[14] -= 0.021
+
+        def follow(robot: FakeFollowers, cfg: dict, target: np.ndarray, plan: object) -> None:
+            robot.q = target.copy()
+
+        with (
+            patch("go_home_path.plan_home") as plan,
+            patch("go_home_path.execute_home", side_effect=follow) as execute,
+        ):
+            return_to_home(self.robot, self.cfg, recorded, self.tcp, skip_if_close=True)
+        plan.assert_called_once()
+        execute.assert_called_once()
+        np.testing.assert_array_equal(self.robot.q[JOINTS], recorded[JOINTS])
+
+    def test_explicit_home_keeps_raised_path_when_already_near_home(self) -> None:
+        recorded = self.robot.read_state()
+        recorded[14] -= 0.019
+        with (
+            patch("go_home_path.plan_home") as plan,
+            patch("go_home_path.execute_home") as execute,
+        ):
+            return_to_home(self.robot, self.cfg, recorded, self.tcp)
+        plan.assert_called_once()
+        execute.assert_called_once()
 
     def test_timeout_identifies_arm_and_each_unmet_condition_without_advancing(self) -> None:
         for joint, offset, condition in (
@@ -257,6 +415,95 @@ class TestRaisedPath(unittest.TestCase):
         ):
             execute_home(self.robot, self.cfg, self.target, plan)
         self.assertEqual(len(self.robot.sent), 1)
+
+    def test_transfer_dip_is_waited_for_but_does_not_relax_arrival_tolerance(self) -> None:
+        for recover in (True, False):
+            with self.subTest(recover=recover):
+                self._check_transfer_dip(recover)
+
+    def _check_transfer_dip(self, recover: bool) -> None:
+        robot = FakeFollowers()
+        plan = plan_home(robot, self.cfg, self.target, self.tcp, 0.1)
+        transfer_index = next(
+            index for index, point in enumerate(plan.waypoints) if point.stage == "transfer"
+        )
+        transfer = plan.waypoints[transfer_index]
+        send = robot.send_action
+        clock = [0.0]
+        recovering = []
+
+        def dip(target: np.ndarray) -> np.ndarray:
+            applied = send(target)
+            if np.array_equal(target, transfer.joints):
+                robot.q[2] -= 0.004
+                recovering.append(target[2])
+            return applied
+
+        def sleep(seconds: float) -> None:
+            clock[0] += seconds
+            if recover and recovering:
+                # A 4 mm dip must not count as arrival: wait before accepting this point.
+                self.assertEqual(len(robot.sent), transfer_index + 1)
+                robot.q[2] = recovering.pop()
+
+        with (
+            patch.object(robot, "send_action", side_effect=dip),
+            patch("go_home_path.time.monotonic", side_effect=lambda: clock[0]),
+            patch("go_home_path.time.sleep", side_effect=sleep),
+        ):
+            if recover:
+                execute_home(robot, self.cfg, self.target, plan)
+                np.testing.assert_array_equal(robot.q, self.target)
+                robot.wait_for_target.assert_called_once()
+            else:
+                with self.assertRaisesRegex(TimeoutError, "5 s waypoint timeout.*left: unmet=position"):
+                    execute_home(robot, self.cfg, self.target, plan)
+                robot.wait_for_target.assert_not_called()
+                np.testing.assert_array_equal(robot.sent[-1], transfer.joints)
+
+    def test_height_guard_stops_either_arm_before_or_during_motion_with_diagnostics(self) -> None:
+        for side, joint in (("left", 2), ("right", 10)):
+            for before_command in (True, False):
+                with self.subTest(side=side, before_command=before_command):
+                    self._check_height_guard(side, joint, before_command)
+
+    def _check_height_guard(self, side: str, joint: int, before_command: bool) -> None:
+        robot = FakeFollowers()
+        plan = plan_home(robot, self.cfg, self.target, self.tcp, 0.1)
+        transfer = next(point for point in plan.waypoints if point.stage == "transfer")
+        send = robot.send_action
+        clock = [0.0]
+        if before_command:
+            robot.q[joint] -= 0.0061
+
+        def drop(target: np.ndarray) -> np.ndarray:
+            applied = send(target)
+            if np.array_equal(target, transfer.joints):
+                robot.q[joint] -= 0.0061
+            return applied
+
+        with (
+            patch.object(robot, "send_action", side_effect=drop),
+            patch("go_home_path.time.monotonic", side_effect=lambda: clock[0]),
+            patch(
+                "go_home_path.time.sleep",
+                side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+            ),
+            self.assertLogs("go_home_path", level="ERROR") as logs,
+            self.assertRaisesRegex(RuntimeError, "dropped below") as caught,
+        ):
+            execute_home(robot, self.cfg, self.target, plan)
+        message = str(caught.exception)
+        self.assertIn(f"{side}: actual Z=", message)
+        self.assertIn("downward deviation=6.10 mm (limit 6.00 mm)", message)
+        self.assertIn("lower limit Z=", message)
+        self.assertIn("before command" if before_command else "during motion", message)
+        self.assertIn(message, logs.output[-1])
+        if before_command:
+            self.assertFalse(robot.sent)
+        else:
+            np.testing.assert_array_equal(robot.sent[-1], transfer.joints)
+        robot.wait_for_target.assert_not_called()
 
     def test_recorded_tcp_interpolates_same_timestamp_and_short_quaternion_arc(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

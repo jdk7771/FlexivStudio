@@ -1,0 +1,86 @@
+{
+  "dataset": {
+    "repo_id": "local/DualArm_FoldTowel_pose_rtc",
+    "root": "/mnt/work/dakun/DualArm_FoldTowel_pose_rtc",
+    "video_backend": "torchcodec",
+    "eval_split": 0.08536585365853659
+  },
+  "policy": {
+    "type": "openpi_pi05",
+    "pretrained_path": "/mnt/work/dakun/models/pi05_base",
+    "text_tokenizer_name": "/mnt/work/dakun/models/paligemma-3b-pt-224",
+    "device": "cuda",
+    "dtype": "bfloat16",
+    "push_to_hub": false,
+    "use_relative_actions": false,
+    "chunk_size": 50,
+    "rtc_training_max_delay": 8,
+    "use_peft": false,
+    "freeze_vision_encoder": false,
+    "train_expert_only": false,
+    "gradient_checkpointing": true,
+    "optimizer_lr": 1e-05,
+    "optimizer_weight_decay": 1e-05,
+    "scheduler_warmup_steps": 1000,
+    "scheduler_decay_steps": 50000,
+    "optimizer_betas": [
+      0.9,
+      0.95
+    ],
+    "optimizer_eps": 1e-08,
+    "optimizer_grad_clip_norm": 1.0,
+    "scheduler_decay_lr": 2.5e-06,
+    "max_action_dim": 32,
+    "tokenizer_max_length": 200,
+    "image_augmentation": false
+  },
+  "output_dir": "/mnt/work/dakun/outputs/openpi_pi05_dualarm_fold_towel_pose_delta_rtc_full",
+  "job_name": "openpi_pi05_dualarm_fold_towel_pose_delta_rtc_full",
+  "seed": 1000,
+  "batch_size": 8,
+  "num_workers": 4,
+  "steps": 50000,
+  "save_freq": 2500,
+  "log_freq": 50,
+  "env_eval_freq": 0,
+  "eval_steps": 1000,
+  "max_eval_samples": 256,
+  "parallelism": {
+    "dp_replicate": 4,
+    "dp_shard": 1
+  },
+  "accelerator": {
+    "mixed_precision": "bf16",
+    "gradient_accumulation": {
+      "steps": 1
+    }
+  },
+  "peft": null,
+  "wandb": {
+    "enable": false
+  },
+  "upstream": {
+    "repository": "https://github.com/Physical-Intelligence/openpi",
+    "commit": "215abfb217dbac7d5f1273282331b9b1866c0479",
+    "archive_sha256": "c3a6f1154ba92487613dff48a9852cc1077fe62fb4ea9eddaad8d9614ae2dd40"
+  },
+  "pose_delta": {
+    "schema_version": 1,
+    "delta_frame": "base",
+    "stored_pose": "xyz_quat_wxyz_gripper_per_arm",
+    "state_rotation": "rotation_6d_columns",
+    "action_rotation": "rotvec",
+    "action_dim": 14,
+    "state_dim": 20,
+    "position_unit": "m",
+    "rotation_unit": "rad",
+    "gripper": "absolute_m",
+    "origin": "current_observation_for_entire_chunk",
+    "stats_file": "meta/pose_delta_stats.json"
+  },
+  "preparation": {
+    "source_root": "/mnt/work/dakun/DualArm_FoldTowel_joint_rtc/data/template_test",
+    "aligned_joint_root": "/mnt/work/dakun/DualArm_FoldTowel_joint_rtc",
+    "max_lowdim_gap_ms": 50
+  }
+}

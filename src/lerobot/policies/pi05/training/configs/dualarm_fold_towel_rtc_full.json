@@ -30,7 +30,7 @@
   "output_dir": "/mnt/work/dakun/outputs/rtc_full",
   "job_name": "rtc_full",
   "seed": 1000,
-  "batch_size": 8,
+  "batch_size": 16,
   "num_workers": 4,
   "steps": 50000,
   "save_freq": 2500,
@@ -39,7 +39,7 @@
   "eval_steps": 1000,
   "max_eval_samples": 256,
   "parallelism": {
-    "dp_replicate": 4,
+    "dp_replicate": 2,
     "dp_shard": 1
   },
   "accelerator": {
