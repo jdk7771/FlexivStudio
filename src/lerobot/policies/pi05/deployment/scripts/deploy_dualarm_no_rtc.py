@@ -486,7 +486,11 @@ def execute(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, default=Path(__file__).with_name("deploy_config_no_rtc.json"))
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path(__file__).resolve().parents[1] / "configs/deploy_config_no_rtc.json",
+    )
     parser.add_argument("--checkpoint", type=Path, help="Skip the interactive checkpoint menu")
     parser.add_argument("--base-model", type=Path)
     parser.add_argument("--tokenizer", type=Path)

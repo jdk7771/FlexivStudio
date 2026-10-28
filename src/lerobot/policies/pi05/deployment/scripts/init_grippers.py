@@ -16,7 +16,9 @@ LOGGER = logging.getLogger(__name__)
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, default=Path(__file__).with_name("deploy_config.json"))
+    parser.add_argument(
+        "--config", type=Path, default=Path(__file__).resolve().parents[1] / "configs/deploy_config.json"
+    )
     parser.add_argument("--check", action="store_true", help="Check configuration without connecting devices")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

@@ -31,7 +31,7 @@ class TestNonRTCEntry(unittest.TestCase):
         import init_grippers
         import replay_data
 
-        config = Path(__file__).with_name("deploy_config_no_rtc.json")
+        config = Path(__file__).resolve().parents[1] / "configs/deploy_config_no_rtc.json"
         start_pose = (np.zeros(16), {"scene": "scene_0001", "timestamp_ms": 150.0})
         with (
             patch("goHome.read_start_pose", return_value=start_pose),
@@ -107,7 +107,7 @@ class TestNonRTCInference(unittest.TestCase):
             create_transition,
         )
 
-        self.cfg = read_json(Path(__file__).with_name("deploy_config_no_rtc.json"))
+        self.cfg = read_json(Path(__file__).resolve().parents[1] / "configs/deploy_config_no_rtc.json")
         self.clock = [100.0]
         self.enterContext(patch("deploy_dualarm_no_rtc.time.monotonic", side_effect=lambda: self.clock[0]))
         self.observation = dict.fromkeys(ACTION_NAMES, 0.5)

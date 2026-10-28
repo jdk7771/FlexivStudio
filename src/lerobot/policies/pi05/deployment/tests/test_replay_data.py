@@ -35,7 +35,7 @@ class TestRecordingFiles(unittest.TestCase):
         self.root = Path(directory.name)
         self.source = self.root / "scene_0001/lowdim/lowdim.h5"
         self.source.parent.mkdir(parents=True)
-        self.cfg = read_json(Path(__file__).with_name("deploy_config.json"))
+        self.cfg = read_json(Path(__file__).resolve().parents[1] / "configs/deploy_config.json")
         self.manifest = {
             "source": str(self.root),
             "dimension_names": ACTION_NAMES,
@@ -127,7 +127,7 @@ class TestRecordingFiles(unittest.TestCase):
 
 class TestReplayExecution(unittest.TestCase):
     def setUp(self) -> None:
-        self.cfg = read_json(Path(__file__).with_name("deploy_config.json"))
+        self.cfg = read_json(Path(__file__).resolve().parents[1] / "configs/deploy_config.json")
         targets = np.zeros((3, 16))
         targets[1, [0, 8]] = 0.01
         targets[2, [0, 8]] = 0.02

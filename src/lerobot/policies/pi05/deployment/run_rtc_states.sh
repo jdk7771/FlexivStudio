@@ -50,9 +50,9 @@ if [[ -d "$task_site_packages/nvidia" ]]; then
     task_nvidia_libs="$(find "$task_site_packages/nvidia" -mindepth 2 -maxdepth 2 -type d -name lib -printf '%p:')"
     export LD_LIBRARY_PATH="${task_nvidia_libs}${LD_LIBRARY_PATH:-}"
 fi
-task_command=("$task_python" "$task_deployment_dir/deploy_rtc_states.py" "${task_checkpoint_args[@]}" "$@")
+task_command=("$task_python" "$task_deployment_dir/scripts/deploy_rtc_states.py" "${task_checkpoint_args[@]}" "$@")
 task_uv="$(dirname -- "$task_python")/uv"
 if [[ -x "$task_uv" ]]; then
-    task_command=("$task_uv" run --no-project --python "$task_python" python "$task_deployment_dir/deploy_rtc_states.py" "${task_checkpoint_args[@]}" "$@")
+    task_command=("$task_uv" run --no-project --python "$task_python" python "$task_deployment_dir/scripts/deploy_rtc_states.py" "${task_checkpoint_args[@]}" "$@")
 fi
 exec "${task_command[@]}"

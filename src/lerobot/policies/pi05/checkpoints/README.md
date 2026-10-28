@@ -8,7 +8,7 @@
 
 ## 本次 RTC 全量微调：DualArm_FoldTowel_pi05_rtc_full_finetune
 
-训练入口为 [`train_dualarm_fold_towel_rtc_full_finetune.sh`](../training/train_dualarm_fold_towel_rtc_full_finetune.sh)，
+训练入口为 [`train_dualarm_fold_towel_rtc_full_finetune.sh`](../training/launchers/train_dualarm_fold_towel_rtc_full_finetune.sh)，
 配置为 [`dualarm_fold_towel_rtc_full_finetune.json`](../training/configs/dualarm_fold_towel_rtc_full_finetune.json)。
 GPU `6,7`，从 `pi05_base` 开始全模型训练，无 LoRA、无测评，双卡全局 batch 32。
 本次使用 FP32 模型、BF16 混合精度，学习率 `2.5e-5`、权重衰减 `0.01`、关闭梯度检查点。
@@ -131,7 +131,7 @@ sha256sum -c SHA256SUMS
 `dataset.eval_split=0`、`eval_steps=0`。当前新训练模板启用留出集和每 1000 步验证，
 因此不能用当前模板声称完全复现这次历史训练。
 
-`deployment/deploy_config_no_rtc.json` 默认选择本地该组的 `025000/pretrained_model/`。
+`deployment/configs/deploy_config_no_rtc.json` 默认选择本地该组的 `025000/pretrained_model/`。
 服务器上的步数不能直接推断本地已下载步数；部署菜单按本地实际模型文件发现。
 非 RTC 入口也可以显式加载 RTC 训练组关闭 RTC 推理，但这不会改变该模型的训练来源。
 

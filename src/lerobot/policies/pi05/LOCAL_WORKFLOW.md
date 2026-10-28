@@ -10,7 +10,7 @@
 | `rtc_frozen_vision` | `dualarm_fold_towel_rtc_frozen_vision` | `DualArm_FoldTowel_pi05_rtc_frozen_vision` | 冻结视觉，其余训练，RTC delay 8 |
 | `no_rtc_full` | `dualarm_fold_towel_no_rtc_full` | `DualArm_FoldTowel_pi05_no_rtc_full` | 全模型，RTC delay 0 |
 
-Bash 为 `training/train_<后缀>.sh`，JSON 为 `training/configs/<后缀>.json`。
+Bash 为 `training/launchers/train_<后缀>.sh`，JSON 为 `training/configs/<后缀>.json`。
 两份全量 RTC 配置的参数差异与历史核对来源见 [training/README.md](training/README.md)。
 
 | 目录 | 职责 | 说明 |

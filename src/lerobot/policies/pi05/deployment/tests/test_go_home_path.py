@@ -80,7 +80,7 @@ class FakeFollowers:
 
 class TestRaisedPath(unittest.TestCase):
     def setUp(self) -> None:
-        self.cfg = read_json(Path(__file__).with_name("deploy_config.json"))
+        self.cfg = read_json(Path(__file__).resolve().parents[1] / "configs/deploy_config.json")
         self.robot = FakeFollowers()
         self.target = self.robot.q.copy()
         self.target[[0, 2, 8, 10]] = [0.5, 0.2, 0.5, 0.15]

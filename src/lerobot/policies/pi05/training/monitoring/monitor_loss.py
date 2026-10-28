@@ -29,7 +29,7 @@ from functools import lru_cache
 from pathlib import Path
 
 
-DEFAULT_OUTPUT = Path(__file__).resolve().parents[1] / "checkpoints/DualArm_FoldTowel_pi05_rtc_full_finetune"
+DEFAULT_OUTPUT = Path(__file__).resolve().parents[2] / "checkpoints/DualArm_FoldTowel_pi05_rtc_full_finetune"
 STEP_RE = re.compile(r"^\s+step: (\d+)\s*$", re.MULTILINE)
 EVAL_LOSS_RE = re.compile(r"^\s+eval_loss: ([0-9.eE+-]+)\s*$", re.MULTILINE)
 SCALAR_LOSS_RE = re.compile(r'"loss":\s*([0-9.eE+-]+)(?=[,}])')

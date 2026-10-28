@@ -7,9 +7,9 @@ import sys
 from pathlib import Path
 
 OPENPI_ROOT = Path(__file__).resolve().parents[1]
-PI05_DEPLOYMENT = OPENPI_ROOT.parent / "pi05" / "deployment"
+PI05_SCRIPTS = OPENPI_ROOT.parent / "pi05" / "deployment" / "scripts"
 # Existing hardware modules are standalone scripts with sibling imports.
-for directory in (PI05_DEPLOYMENT, OPENPI_ROOT / "src"):
+for directory in (PI05_SCRIPTS, OPENPI_ROOT / "src"):
     if str(directory) not in sys.path:
         sys.path.append(str(directory))
 os.environ["JAX_PLATFORMS"] = "cpu"

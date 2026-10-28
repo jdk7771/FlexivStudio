@@ -210,7 +210,9 @@ def execute_replay(cfg: dict, recording: Recording, speed: float) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, default=Path(__file__).with_name("deploy_config.json"))
+    parser.add_argument(
+        "--config", type=Path, default=Path(__file__).resolve().parents[1] / "configs/deploy_config.json"
+    )
     parser.add_argument("--scene", help="Recorded scene name, e.g. scene_0001; otherwise show a menu")
     parser.add_argument("--speed", type=float, default=1.0, help="Playback speed: 1 = original, 0.5 = half")
     parser.add_argument("--list", action="store_true", help="List recordings without connecting hardware")

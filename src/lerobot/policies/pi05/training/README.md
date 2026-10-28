@@ -3,12 +3,26 @@
 本次新实验使用 `rtc_full_finetune`。`rtc_full` 保留历史 RTC 全量实验的训练参数，
 对应机器人机器上的 `checkpoints/DualArm_FoldTowel_pi05_rtc_full`；两份配置分别管理历史实验与本次实验。
 
+## 文件结构
+
+顶层只保留说明和公共启动器；四套快捷脚本集中放在 `launchers/`。
+
+```text
+training/
+├── README.md
+├── train.sh                     # 公共训练启动器
+├── launchers/                   # 四套实验 Bash，包括本次 full_finetune
+├── configs/                     # 对应的四份 JSON
+├── monitoring/                  # monitor_loss.py、loss_dashboard.html
+└── setup/                       # setup_server.sh、server-constraints.txt
+```
+
 ## rtc_full 与 rtc_full_finetune
 
 | 参数 | `rtc_full`：历史实验参数 | `rtc_full_finetune`：本次新实验 |
 | --- | --- | --- |
 | 配置 | [dualarm_fold_towel_rtc_full.json](configs/dualarm_fold_towel_rtc_full.json) | [dualarm_fold_towel_rtc_full_finetune.json](configs/dualarm_fold_towel_rtc_full_finetune.json) |
-| Bash | [train_dualarm_fold_towel_rtc_full.sh](train_dualarm_fold_towel_rtc_full.sh) | [train_dualarm_fold_towel_rtc_full_finetune.sh](train_dualarm_fold_towel_rtc_full_finetune.sh) |
+| Bash | [launchers/train_dualarm_fold_towel_rtc_full.sh](launchers/train_dualarm_fold_towel_rtc_full.sh) | [launchers/train_dualarm_fold_towel_rtc_full_finetune.sh](launchers/train_dualarm_fold_towel_rtc_full_finetune.sh) |
 | 默认物理 GPU | `0,1,2,3` | `6,7` |
 | 每卡 batch × 卡数 | 8 × 4 | 16 × 2 |
 | 全局 batch / 梯度累积 | 32 / 1 | 32 / 1 |
@@ -44,10 +58,10 @@ Git 提交 `fec5968` 曾把 `rtc_full` 模板改成新训练默认值，随后�
 cd /mnt/data/dakun/workspace/lerobot
 
 # 预览，不加载模型或启动训练
-bash src/lerobot/policies/pi05/training/train_dualarm_fold_towel_rtc_full_finetune.sh --print-command
+bash src/lerobot/policies/pi05/training/launchers/train_dualarm_fold_towel_rtc_full_finetune.sh --print-command
 
 # 开始新训练
-bash src/lerobot/policies/pi05/training/train_dualarm_fold_towel_rtc_full_finetune.sh
+bash src/lerobot/policies/pi05/training/launchers/train_dualarm_fold_towel_rtc_full_finetune.sh
 ```
 
 `resume=false`，从基础模型重新微调；`dataset.eval_split=0`、`eval_steps=0`、`env_eval_freq=0`，
@@ -81,7 +95,7 @@ bash src/lerobot/policies/pi05/training/train.sh \
 | `rtc_frozen_vision` | `dualarm_fold_towel_rtc_frozen_vision` | RTC，冻结视觉，其余参数训练 | `6,7` | 8 × 2 |
 | `no_rtc_full` | `dualarm_fold_towel_no_rtc_full` | 无 RTC，全模型训练 | `3,2,1,0` | 8 × 4 |
 
-配置在 `configs/<后缀>.json`，脚本为 `train_<后缀>.sh`。
+配置在 `configs/<后缀>.json`，脚本为 `launchers/train_<后缀>.sh`。
 旧 LoRA、LoRA batch 8 与 `rtc_unfrozen_vision` 入口已移出当前模板，原配置可在 Git 历史中查阅。
 `rtc_unfrozen_vision` 原总 batch 16，与本次总 batch 32 的实验分开记录。
 
@@ -111,9 +125,9 @@ bash src/lerobot/policies/pi05/training/train.sh \
 | 文件 | 用途 |
 | --- | --- |
 | `train.sh` | 公共 JSON 启动器、机器路径覆盖、`--print-command` |
-| `configs/`、`train_dualarm_*.sh` | 四套具名实验与对应快捷入口 |
-| `setup_server.sh`、`server-constraints.txt` | 新环境安装与依赖约束 |
-| `monitor_loss.py`、`loss_dashboard.html` | loss 采样、曲线和页面 |
+| `configs/`、`launchers/` | 四套具名实验与对应快捷入口 |
+| `setup/setup_server.sh`、`setup/server-constraints.txt` | 新环境安装与依赖约束 |
+| `monitoring/monitor_loss.py`、`monitoring/loss_dashboard.html` | loss 采样、曲线和页面 |
 
 现有 PI05 Python 为 `/mnt/data/dakun/envs/lerobot/bin/python`；无需重建环境。
 数据在 `/mnt/data/dakun/datasets/DualArm_FoldTowel_joint_rtc`，base 和 tokenizer 分别在
@@ -123,7 +137,7 @@ bash src/lerobot/policies/pi05/training/train.sh \
 监控默认对应本次 `rtc_full_finetune`；显式指定其他实验用 `--output-dir`：
 
 ```bash
-/mnt/data/dakun/envs/lerobot/bin/python src/lerobot/policies/pi05/training/monitor_loss.py --serve
+/mnt/data/dakun/envs/lerobot/bin/python src/lerobot/policies/pi05/training/monitoring/monitor_loss.py --serve
 ```
 
 默认端口 8766，可通过 VS Code 转发。采样曲线与终端训练窗口均值口径不同，停止监控不会停止训练。

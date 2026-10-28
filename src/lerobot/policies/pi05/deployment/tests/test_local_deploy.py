@@ -58,7 +58,7 @@ def write_tensors(path: Path, names: list[str]) -> None:
 
 def mock_configuration() -> dict:
     """Keep mocked controller tests independent of user-selected live controller settings."""
-    cfg = read_json(Path(__file__).with_name("deploy_config.json"))
+    cfg = read_json(Path(__file__).resolve().parents[1] / "configs/deploy_config.json")
     cfg["hardware"]["control_mode"] = "NRT_JOINT_POSITION"
     cfg["hardware"]["max_target_error_rad"] = 0.25
     for side in ("left", "right"):
@@ -382,7 +382,7 @@ class TestCheckpointMenu(unittest.TestCase):
                 choose_checkpoint(self.root)
 
     def test_selected_checkpoint_reaches_execution_without_using_default_link(self) -> None:
-        cfg = read_json(Path(__file__).with_name("deploy_config.json"))
+        cfg = read_json(Path(__file__).resolve().parents[1] / "configs/deploy_config.json")
         cfg["checkpoint"] = str(self.root / "pretrained_model")
         cfg["checkpoint_root"] = str(self.root)
         expected = self.rtc_root / "050000/pretrained_model"
@@ -403,7 +403,7 @@ class TestCheckpointMenu(unittest.TestCase):
 
     def test_explicit_checkpoint_skips_both_checkpoint_menus(self) -> None:
         expected = self.rtc_root / "040000/pretrained_model"
-        cfg = read_json(Path(__file__).with_name("deploy_config.json"))
+        cfg = read_json(Path(__file__).resolve().parents[1] / "configs/deploy_config.json")
         with (
             patch.object(sys, "argv", ["deploy_dualarm.py", "--checkpoint", str(expected), "--check"]),
             patch("deploy_dualarm.read_json", return_value=cfg),
@@ -425,7 +425,7 @@ class TestCheckpointMenu(unittest.TestCase):
             require_compatible_rdk()
 
     def test_check_only_does_not_load_model_or_connect_devices(self):
-        cfg = read_json(Path(__file__).with_name("deploy_config.json"))
+        cfg = read_json(Path(__file__).resolve().parents[1] / "configs/deploy_config.json")
         with (
             patch.object(sys, "argv", ["deploy_dualarm.py", "--check"]),
             patch("deploy_dualarm.read_json", return_value=cfg),
@@ -473,7 +473,7 @@ class TestStartPoseSource(unittest.TestCase):
             }
             manifest_path = root / "manifest.json"
             manifest_path.write_text(json.dumps(manifest))
-            cfg = read_json(Path(__file__).with_name("deploy_config.json"))
+            cfg = read_json(Path(__file__).resolve().parents[1] / "configs/deploy_config.json")
             cfg["start_pose"]["manifest"] = str(manifest_path)
             state, info = read_start_pose(cfg)
             np.testing.assert_allclose(state[:7], [2.5] * 7)
@@ -709,7 +709,7 @@ class TestTransforms(unittest.TestCase):
 
 class TestExecutionInitialization(unittest.TestCase):
     def setUp(self) -> None:
-        self.cfg = read_json(Path(__file__).with_name("deploy_config.json"))
+        self.cfg = read_json(Path(__file__).resolve().parents[1] / "configs/deploy_config.json")
         self.cfg["duration_s"] = 0.0
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -1014,7 +1014,10 @@ class TestMockedHardware(unittest.TestCase):
         patch.dict(sys.modules, {"flexivrdk": sdk, "pyrealsense2": SimpleNamespace()}).start()
         patch("flexiv_deploy_hardware.LatestCamera", Camera).start()
         self.robot = FlexivDualArm(
-            self.cfg, start_pose=read_json(Path(__file__).with_name("deploy_config.json"))["start_pose"]
+            self.cfg,
+            start_pose=read_json(Path(__file__).resolve().parents[1] / "configs/deploy_config.json")[
+                "start_pose"
+            ],
         )
         self.addCleanup(self.robot.close)
 
