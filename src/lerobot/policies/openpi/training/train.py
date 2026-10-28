@@ -1,4 +1,4 @@
-"""Four-GPU full fine-tuning of official openpi pi0.5 with the reference RTC objective.
+"""Two/four-GPU full fine-tuning of official openpi pi0.5 with the reference RTC objective.
 
 The model is openpi.models_pytorch.pi0_pytorch.PI0Pytorch, never LeRobot's policy.
 LeRobot supplies only the existing v3 dataset reader. --check-data is CPU-only.
@@ -39,8 +39,9 @@ def read_config(path):
         raise ValueError("This entry point implements full-model training without LoRA.")
     if config["accelerator"]["gradient_accumulation"]["steps"] != 1:
         raise ValueError("This experiment expects gradient accumulation = 1.")
-    if config["parallelism"] != {"dp_replicate": 4, "dp_shard": 1}:
-        raise ValueError("This experiment expects four DDP ranks.")
+    if config["parallelism"] not in ({"dp_replicate": 2, "dp_shard": 1},
+                                     {"dp_replicate": 4, "dp_shard": 1}):
+        raise ValueError("This experiment expects two or four DDP ranks.")
     if config["wandb"]["enable"] or config["env_eval_freq"] != 0:
         raise ValueError("Only local loss logging and offline validation are supported here.")
     if not 0 <= p["rtc_training_max_delay"] < p["chunk_size"]:
@@ -49,6 +50,25 @@ def read_config(path):
         if not Path(value).is_dir():
             raise FileNotFoundError(value)
     return config
+
+
+def configure_world_size(config, world_size):
+    """Repartition the global batch while preserving steps per sampler epoch."""
+    if world_size not in (2, 4):
+        raise ValueError("Only two or four DDP ranks are supported.")
+    global_batch = config["batch_size"] * config["parallelism"]["dp_replicate"]
+    if global_batch <= 0 or global_batch % world_size:
+        raise ValueError("Global batch must be positive and divisible by the DDP world size.")
+    config["batch_size"] = global_batch // world_size
+    config["parallelism"] = {"dp_replicate": world_size, "dp_shard": 1}
+
+
+def validate_resume_config(previous, config):
+    """Allow only a rank/batch repartition with an unchanged global batch."""
+    expected = dict(previous)
+    configure_world_size(expected, config["parallelism"]["dp_replicate"])
+    if expected != config:
+        raise ValueError("Resume allows only DDP rank changes preserving the global batch.")
 
 
 def make_datasets(config):
@@ -170,8 +190,12 @@ def train(config, resume):
     from openpi.models_pytorch.pi0_pytorch import PI0Pytorch
 
     rank, local_rank = int(os.environ["RANK"]), int(os.environ["LOCAL_RANK"])
-    if int(os.environ["WORLD_SIZE"]) != 4:
-        raise ValueError("Launch this config with torchrun --nproc-per-node=4.")
+    world_size = int(os.environ["WORLD_SIZE"])
+    if world_size != config["parallelism"]["dp_replicate"]:
+        raise ValueError("WORLD_SIZE must match the configured DDP ranks.")
+    if resume:
+        previous = json.loads((Path(resume) / "train_config.json").read_text())
+        validate_resume_config(previous, config)
     torch.cuda.set_device(local_rank)
     device = torch.device("cuda", local_rank)
     dist.init_process_group("nccl", device_id=device)
@@ -198,7 +222,7 @@ def train(config, resume):
         (output / "split.json").write_text(json.dumps(split, indent=2) + "\n")
         logging.info("Split: %d train episodes / %d eval episodes; %d validation frames",
                      len(train_ids), len(eval_ids), len(validation))
-    sampler = DistributedSampler(dataset, num_replicas=4, rank=rank, seed=config["seed"], shuffle=True)
+    sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, seed=config["seed"], shuffle=True)
     batches = loader(dataset, collator, config, sampler)
     eval_batches = loader(validation, collator, config, evaluation=True) if rank == 0 else None
     model = PI0Pytorch(model_config(config))
@@ -213,13 +237,13 @@ def train(config, resume):
                                   eps=p["optimizer_eps"], weight_decay=p["optimizer_weight_decay"])
     step, epoch, offset, saved_rng = 0, 0, 0, None
     if resume:
-        previous = json.loads((weights / "train_config.json").read_text())
-        if previous != config:
-            raise ValueError("Resume must use the checkpoint's unchanged train_config.json.")
         saved = torch.load(weights / "training_state.pt", map_location="cpu", weights_only=False)
         optimizer.load_state_dict(saved["optimizer"])
         step, epoch, offset = saved["step"], saved["epoch"], saved["batch_offset"]
-        saved_rng = saved["rng"][rank]
+        saved_rng = saved["rng"][rank] if rank < len(saved["rng"]) else None
+        if len(saved["rng"]) != world_size:
+            logging.warning("DDP ranks changed from %d to %d; global batch and batch offset are preserved, "
+                            "but random draws will differ from the previous run.", len(saved["rng"]), world_size)
         del saved
         logging.info("Rank %d: resumed %s at step=%d/%d epoch=%d batch_offset=%d; next_lr=%.9g",
                      rank, weights, step, config["steps"], epoch, offset, learning_rate(step, p))
@@ -229,7 +253,8 @@ def train(config, resume):
     running = torch.zeros((), device=device)
     window = 0
     started = time.monotonic()
-    logging.info("Rank %d: official PI0Pytorch, full model, batch 8/rank, RTC delay %d", rank, p["rtc_training_max_delay"])
+    logging.info("Rank %d: official PI0Pytorch, full model, batch %d/rank, global batch %d, RTC delay %d",
+                 rank, config["batch_size"], config["batch_size"] * world_size, p["rtc_training_max_delay"])
     while step < config["steps"]:
         sampler.set_epoch(epoch)
         for batch_index, (obs, actions) in enumerate(batches):
@@ -257,7 +282,7 @@ def train(config, resume):
             window += 1
             if step % config["log_freq"] == 0 or step == config["steps"]:
                 dist.all_reduce(running)
-                value = running.item() / (window * 4)
+                value = running.item() / (window * world_size)
                 if rank == 0:
                     logging.info("step=%d loss=%.6f lr=%.9g grad_norm=%.4f elapsed=%.1fs", step, value, lr, norm.item(), time.monotonic()-started)
                     append_metric(output, "train_loss.csv", dict(step=step, loss=value, lr=lr, elapsed=time.monotonic()-started))
@@ -301,7 +326,8 @@ def main():
                               checked_pretrained_keys=shapes, cuda_initialized=torch.cuda.is_initialized()), indent=2))
         return
     if "RANK" not in os.environ:
-        parser.error("Use the four-GPU bash launcher, or --check-data for CPU validation.")
+        parser.error("Use the two/four-GPU bash launcher, or --check-data for CPU validation.")
+    configure_world_size(config, int(os.environ["WORLD_SIZE"]))
     train(config, args.resume)
 
 

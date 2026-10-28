@@ -127,3 +127,5 @@ bash training/setup.sh
 
 `JAX_PLATFORMS=cpu` 避免官方模块导入时 JAX 占 GPU；实际训练完全用 PyTorch。
 检查数据和单元测试不启动完整模型训练。全尺寸四卡显存/吞吐需要正式启动后确认。
+
+通用入口支持通过 `CUDA_VISIBLE_DEVICES` 选择两卡或四卡，保持原配置的全局 batch：例如原四卡每卡 8，改双卡后每卡 16。续训仅允许保持全局 batch 的卡数切换，恢复已保存 step、优化器和 batch 位置；卡数变化时随机采样不保证逐位一致。专用 1024 入口仍默认四卡。

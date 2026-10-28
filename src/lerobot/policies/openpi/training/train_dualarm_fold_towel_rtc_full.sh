@@ -19,7 +19,7 @@ while (( $# )); do
             shift 2 ;;
         -h|--help)
             echo 'Usage: bash train_dualarm_fold_towel_rtc_full.sh [--print-command | --check-data] [--resume CHECKPOINT_DIR|latest]'
-            echo 'Defaults: physical GPU 0,1,2,3; port 29520. OPENPI_CONFIG selects another JSON.'
+            echo 'Defaults: physical GPU 0,1,2,3; port 29520. CUDA_VISIBLE_DEVICES supports 2 or 4 GPUs; global batch is preserved. OPENPI_CONFIG selects another JSON.'
             exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 2 ;;
     esac
@@ -64,8 +64,8 @@ if "$task_check"; then
     task_command=("$task_python" "$task_dir/train.py" --config "$task_config" --check-data)
 else
     IFS=, read -r -a task_devices <<< "$CUDA_VISIBLE_DEVICES"
-    [[ ${#task_devices[@]} == 4 ]] || { echo 'Exactly four visible GPUs are required.' >&2; exit 2; }
-    task_command=("$task_python" -m torch.distributed.run --nnodes=1 --nproc-per-node=4
+    [[ ${#task_devices[@]} == 2 || ${#task_devices[@]} == 4 ]] || { echo 'Exactly two or four visible GPUs are required.' >&2; exit 2; }
+    task_command=("$task_python" -m torch.distributed.run --nnodes=1 "--nproc-per-node=${#task_devices[@]}"
         "--master-port=$MASTER_PORT" "$task_dir/train.py" --config "$task_config" "${task_args[@]}")
 fi
 if "$task_print"; then
