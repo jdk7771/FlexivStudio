@@ -15,7 +15,7 @@ training/
 ├── train_dualarm_fold_towel_rtc.sh     # LoRA / GPU 4 快捷入口
 ├── train_dualarm_fold_towel_rtc_frozen_vision.sh # RTC，冻结视觉编码器 / GPU 6,7
 ├── train_dualarm_fold_towel_rtc_unfrozen_vision.sh # RTC，全部参数训练 / GPU 6,7
-├── train_dualarm_fold_towel_rtc_full.sh # rtc_full，全部参数训练 / GPU 4,5，每卡 batch 16
+├── train_dualarm_fold_towel_rtc_full.sh # rtc_full，全部参数训练 / GPU 4,5，总 batch 32，无验证集
 ├── train_dualarm_fold_towel_rtc_lora_bs8.sh # LoRA batch 8 / GPU 7
 ├── train_dualarm_fold_towel_no_rtc_full.sh # 无 RTC 全量 / GPU 7,6,5,4
 ├── setup_server.sh                    # 服务器新建环境
@@ -31,17 +31,17 @@ E1/E2/E3 配置按 [实验记录](../../../../../examples/flexiv/docs/EXPERIMENT
 | `dualarm_fold_towel_rtc_lora.json`     | E1，动作专家和投影 LoRA，rank/alpha 32 | 16 / 16                 | `1e-4` | `4`                  |
 | `dualarm_fold_towel_rtc_frozen_vision.json` | E2 的冻结方式：冻结视觉编码器，其余参数训练，无 LoRA | 8 / 16 | `1e-5` | `6,7` |
 | `dualarm_fold_towel_rtc_unfrozen_vision.json` | RTC，视觉编码器、VLM 和动作专家全部训练，无 LoRA | 8 / 16 | `1e-5` | `6,7` |
-| `dualarm_fold_towel_rtc_full.json` | 本次 `rtc_full`，视觉编码器、VLM 和动作专家全部训练，无 LoRA | 16 / 32 | `1e-5` | `4,5` |
+| `dualarm_fold_towel_rtc_full.json` | `rtc_full`，全模型训练，无 LoRA、无验证集，其他模型参数采用 PI05Config 默认值 | 16 / 32 | `2.5e-5` | `4,5` |
 | `dualarm_fold_towel_rtc_lora_bs8.json` | E3，同 E1，batch 8                     | 8 / 8                   | `1e-4` | `7`                  |
 | `dualarm_fold_towel_no_rtc_full.json` | 无 RTC，全模型训练，包含视觉编码器     | 8 / 32                  | `1e-5` | `7,6,5,4`            |
 
-共同参数：BF16、梯度检查点、50,000 step、每 2,500 step 保存、每 1,000 step 验证最多 256 个样本。动作是关节相对当前观测、夹爪绝对值，chunk 50。所有 RTC 配置的 `policy.rtc_training_max_delay=8`；四卡无 RTC 配置设为 `policy.rtc_config=null`、`policy.rtc_training_max_delay=0`，关闭 LoRA 并训练全部模型参数。
+除 `rtc_full` 外，共同参数：BF16、梯度检查点、50,000 step、每 2,500 step 保存、每 1,000 step 验证最多 256 个样本。动作是关节相对当前观测、夹爪绝对值，chunk 50。所有 RTC 配置的 `policy.rtc_training_max_delay=8`；四卡无 RTC 配置设为 `policy.rtc_config=null`、`policy.rtc_training_max_delay=0`，关闭 LoRA 并训练全部模型参数。
 
 RTC 的两组非 LoRA 配置通过 `policy.freeze_vision_encoder` 区分：`frozen_vision=true`，`unfrozen_vision=false`；两组的 `train_expert_only=false`、`use_peft=false`、`peft=null`。除冻结开关、实验名和输出目录外，两份 JSON 完全相同，以便比较。它们均从 `pi05_base` 开始，分别保存到 `/mnt/work/dakun/outputs/DualArm_FoldTowel_pi05_rtc_frozen_vision` 和 `/mnt/work/dakun/outputs/DualArm_FoldTowel_pi05_rtc_unfrozen_vision`，可通过 `OUTPUT_DIR` 覆盖。
 
 原来冻结视觉编码器的 RTC 实验使用明确命名的 `rtc_frozen_vision` 入口；服务器历史输出目录保留原名，续训仍读取其 `train_config.json`；本地旧模型目录由 `checkpoints/rtc_full` 改为 `checkpoints/rtc_frozen_vision`，旧版部署时显式选择 `rtc_frozen_vision`。新四卡全模型实验使用 `checkpoints/rtc_full`，本次从 1024 服务器下载了 15k/20k/25k，RTC 部署默认选择新组 25k；两组模型不按相同步数混放。`rtc_frozen_vision` 和 `rtc_unfrozen_vision` 两卡入口默认使用 GPU `6,7`，可用 `CUDA_VISIBLE_DEVICES` 覆盖；冻结版默认端口 `29517`，不冻结版默认 `29519`，均可通过 `MASTER_PORT` 覆盖。
 
-按本次实验命名，`train_dualarm_fold_towel_rtc_full.sh` 和 `dualarm_fold_towel_rtc_full.json` 现在用于 **GPU 4,5、不冻结视觉编码器** 的 RTC 全模型训练：`job_name=rtc_full`，输出 `/mnt/work/dakun/outputs/rtc_full`，每卡 batch 16、全局 batch 32，默认端口 `29519`。从 `pi05_base` 开始训练 50,000 step，RTC delay 8，数据划分和学习率沿用上述 RTC 对照配置。
+`train_dualarm_fold_towel_rtc_full.sh` 和 `dualarm_fold_towel_rtc_full.json` 用于 **GPU 4,5、不冻结视觉编码器** 的 RTC 全模型训练：`job_name=rtc_full`，输出 `/mnt/work/dakun/outputs/rtc_full`，默认端口 `29519`。双卡并行度和全局 batch 32 写在 Bash 中，启动时换算为每卡 batch 16、梯度累积 1；JSON 的 `batch_size=16` 遵循训练器的每卡语义。从 `pi05_base` 开始训练 50,000 step，每 10,000 step 保存。保留 RTC delay 8 和相对关节 / 绝对夹爪动作，其余模型参数采用 `PI05Config` 默认值：`dtype=float32`、关闭梯度检查点、学习率 `2.5e-5`、权重衰减 `0.01`、warmup 1,000 step、decay 30,000 step、最终学习率 `2.5e-6`。运行时仍采用 BF16 混合精度。`dataset.eval_split=0`、`eval_steps=0`、`env_eval_freq=0`，全部 123 个 episode 用于训练，不留验证 / 测试集。
 
 已有 `rtc_full` checkpoint 原先采用四卡、每卡 batch 8。切换为双卡、每卡 batch 16 续训时，从 checkpoint 配置启动并显式覆盖并行度和 batch；全局 batch 仍为 32，优化器、调度器和 step 从 checkpoint 恢复。卡数变化后，不保证随机采样与原四卡运行逐位一致：
 
@@ -54,7 +54,7 @@ bash src/lerobot/policies/pi05/training/train.sh \
 
 四卡无 RTC 配置固定使用物理 GPU `7,6,5,4`，每卡 batch 8、梯度累积 1，全局 batch 32；默认端口为 `29518`。输出目录为 `/mnt/work/dakun/outputs/DualArm_FoldTowel_pi05_no_rtc_full_gpu7_6_5_4`，可用 `OUTPUT_DIR` 指定另一次实验的目录。快捷脚本兼容 `BATCH_SIZE` 和 `TRAIN_STEPS` 环境变量；显式命令行参数优先。
 
-数据为 `local/DualArm_FoldTowel_joint_rtc`，123 个 episode。`dataset.eval_split=0.08536585365853659` 与原转换清单按最后 10% 源 scene 留出验证集的结果一致：112 个训练 episode、11 个验证 episode。这是该数据集的固定划分；更换数据后应一起检查 `repo_id`、`root`、`eval_split` 和 `eval_steps`。
+数据为 `local/DualArm_FoldTowel_joint_rtc`，123 个 episode。除 `rtc_full` 使用全部数据外，其他模板的 `dataset.eval_split=0.08536585365853659` 与原转换清单按最后 10% 源 scene 留出验证集的结果一致：112 个训练 episode、11 个验证 episode。更换数据后应一起检查 `repo_id`、`root`、`eval_split` 和 `eval_steps`。
 
 ## 先看命令，再启动
 
@@ -95,7 +95,7 @@ bash src/lerobot/policies/pi05/training/train.sh \
   --print-command
 ```
 
-确认后去掉 `--print-command` 才会启动。进程数由配置中的 `parallelism.dp_replicate * parallelism.dp_shard` 决定；两卡配置需要提供两张可用 GPU，`batch_size` 表示每卡 batch。
+确认后去掉 `--print-command` 才会启动。进程数由配置和命令行覆盖后的 `parallelism.dp_replicate * parallelism.dp_shard` 决定；`rtc_full` 的两卡并行度由快捷 Bash 脚本传入。两卡配置需要提供两张可用 GPU，`batch_size` 表示每卡 batch。
 
 ## 每次实验怎么保存配置
 
