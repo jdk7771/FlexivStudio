@@ -2,15 +2,19 @@
 # Install an isolated Python environment. This script does not launch training.
 set -euo pipefail
 
-task_repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../../../.." && pwd)"
+task_repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../../../.." && pwd -P)"
 task_work_root="$(dirname -- "$task_repo_root")"
-task_bootstrap="$task_work_root/.uv-bootstrap"
+if [[ "$(basename -- "$task_work_root")" == repos || "$(basename -- "$task_work_root")" == workspace ]]; then
+    task_work_root="$(dirname -- "$task_work_root")"
+fi
+task_bootstrap="$task_work_root/envs/uv-bootstrap"
+task_env="${LEROBOT_ENV:-$task_work_root/envs/lerobot}"
 task_system_python="${PYTHON_BOOTSTRAP:-/usr/local/bin/python3}"
 if [[ ! -x "$task_system_python" ]]; then
     task_system_python="$(command -v python3)"
 fi
-export UV_CACHE_DIR="$task_work_root/.cache/uv"
-export UV_PYTHON_INSTALL_DIR="$task_work_root/.python"
+export UV_CACHE_DIR="$task_work_root/envs/cache/uv"
+export UV_PYTHON_INSTALL_DIR="$task_work_root/envs/python"
 
 if [[ ! -x "$task_bootstrap/bin/uv" ]]; then
     "$task_system_python" -m venv "$task_bootstrap"
@@ -18,8 +22,10 @@ if [[ ! -x "$task_bootstrap/bin/uv" ]]; then
 fi
 task_uv="$task_bootstrap/bin/uv"
 "$task_uv" python install 3.12
-"$task_uv" venv --python 3.12 "$task_repo_root/.venv"
-task_python="$task_repo_root/.venv/bin/python"
+if [[ ! -x "$task_env/bin/python" ]]; then
+    "$task_uv" venv --python 3.12 "$task_env"
+fi
+task_python="$task_env/bin/python"
 cd "$task_repo_root"
 
 # uv pip uses explicit indexes below; it does not apply the project's torch cu128 source mapping.

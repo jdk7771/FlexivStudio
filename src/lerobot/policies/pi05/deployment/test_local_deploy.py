@@ -19,6 +19,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 
+import deploy_dualarm
+import deploy_dualarm_no_rtc
 import numpy as np
 from deploy_dualarm import (
     align_start_pose,
@@ -302,6 +304,31 @@ class TestCheckpointMenu(unittest.TestCase):
         self.assertEqual(keys.call_count, 3)
         self.assertIn("step 25,000", output.getvalue())
         self.assertNotIn("step 50,000", output.getvalue())
+
+    def test_training_output_is_discovered_in_rtc_and_non_rtc_menus(self) -> None:
+        experiment = self.root / "DualArm_FoldTowel_pi05_rtc_full_finetune"
+        for step in ("010000", "050000"):
+            model = experiment / "checkpoints" / step / "pretrained_model"
+            model.mkdir(parents=True)
+            (model / "config.json").write_text("{}")
+            (model / "model.safetensors").write_bytes(b"weight")
+        (experiment / "checkpoints/last").symlink_to("050000", target_is_directory=True)
+        for module in (deploy_dualarm, deploy_dualarm_no_rtc):
+            with self.subTest(entry=module.__name__):
+                choices = module.available_checkpoints(experiment)
+                self.assertEqual(
+                    [(item[0], item[1]) for item in choices],
+                    [(experiment.name, 50000), (experiment.name, 10000)],
+                )
+                folders = module.available_checkpoint_folders(self.root)
+                index = folders.index(experiment) + 1
+                with patch("builtins.input", side_effect=[str(index), "1"]), redirect_stdout(io.StringIO()):
+                    selected = module.choose_checkpoint(self.root)
+                self.assertEqual(selected, experiment / "checkpoints/050000/pretrained_model")
+                with patch("builtins.input", return_value="1") as keys, redirect_stdout(io.StringIO()):
+                    selected = module.choose_checkpoint(experiment)
+                self.assertEqual(keys.call_count, 1)
+                self.assertEqual(selected, experiment / "checkpoints/050000/pretrained_model")
 
     def test_legacy_config_can_still_select_from_one_experiment_folder(self) -> None:
         with patch("builtins.input", return_value="2"), redirect_stdout(io.StringIO()):

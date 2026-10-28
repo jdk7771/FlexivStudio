@@ -38,6 +38,9 @@ if [[ -n "${1:-}" && "${1:-}" != -* ]]; then
     fi
     task_checkpoint="$task_deployment_dir/../checkpoints/$task_checkpoint_group/$task_step/pretrained_model"
     if [[ ! -d "$task_checkpoint" ]]; then
+        task_checkpoint="$task_deployment_dir/../checkpoints/$task_checkpoint_group/checkpoints/$task_step/pretrained_model"
+    fi
+    if [[ ! -d "$task_checkpoint" ]]; then
         printf 'Checkpoint directory not found: %s\n' "$task_checkpoint" >&2
         exit 1
     fi

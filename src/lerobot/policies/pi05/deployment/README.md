@@ -1,10 +1,70 @@
 # 本地 PI05 部署（RTC / 非 RTC）
 
+本目录只负责模型选择、推理与机械臂执行；训练入口见 [training/README.md](../training/README.md)，
+权重来源与存放方式见 [checkpoints/README.md](../checkpoints/README.md)。
+
+## 入口索引
+
+| 用途 | Bash | Python / 配置 |
+| --- | --- | --- |
+| RTC 模型部署 | `run.sh` | `deploy_dualarm.py` / `deploy_config.json` |
+| 非 RTC 同步推理 | `run_no_rtc.sh` | `deploy_dualarm_no_rtc.py` / `deploy_config_no_rtc.json` |
+| RTC 与高频状态记录 | `run_rtc_states.sh` | `deploy_rtc_states.py`，见 [高频记录说明](README_rtc_states.md) |
+| 回初始姿态 | — | `goHome.py` / `go_home_path.py` |
+| 初始化夹爪 | — | `init_grippers.py` |
+| 回放示教数据 | — | `replay_data.py` |
+
+`flexiv_deploy_contract.py` 负责文件与配置检查，`flexiv_deploy_hardware.py` 负责设备适配，
+`deployment_recording.py` 与 `high_rate_state_recording.py` 负责记录；`test_*.py` 是离线或模拟设备检查。
+
+## 历史模型与本次新模型
+
+| 权重分组 | 对应训练配置 | 来源与关键设置 |
+| --- | --- | --- |
+| `DualArm_FoldTowel_pi05_rtc_full` | `dualarm_fold_towel_rtc_full.json` | 历史服务器 `rtc_full`；四卡 × batch 8，BF16，lr `1e-5`，开启验证 |
+| `DualArm_FoldTowel_pi05_rtc_full_finetune` | `dualarm_fold_towel_rtc_full_finetune.json` | 本次 GPU `6,7`；双卡 × batch 16，FP32 / BF16，lr `2.5e-5`，无验证 |
+| `DualArm_FoldTowel_pi05_rtc_frozen_vision` | `dualarm_fold_towel_rtc_frozen_vision.json` | 历史目录名含 full，实际冻结视觉编码器 |
+| `DualArm_FoldTowel_pi05_no_rtc_full` | `dualarm_fold_towel_no_rtc_full.json` | 独立无 RTC 实验，历史保存配置优先 |
+
+机器人机器上的 `/home/nematrix/snap/lerobot/src/lerobot/policies/pi05/checkpoints/DualArm_FoldTowel_pi05_rtc_full`
+按既有下载记录对应历史 `rtc_full`，来源与校验值见 [checkpoint 说明](../checkpoints/README.md)。
+其实际参数由 checkpoint 内的 `train_config.json` 决定；新训练只写入独立的 `rtc_full_finetune` 分组。
+
+## 本次 RTC 全量微调模型
+
+新增训练组为 `DualArm_FoldTowel_pi05_rtc_full_finetune`，默认使用 GPU `6,7` 训练，
+50,000 steps、不做测评，计划保留 `010000`、`020000`、`030000`、`040000`、`050000`。
+当前只准备了训练入口，尚无本次训练权重。
+
+训练输出直接保存在服务器的
+`/mnt/data/dakun/workspace/lerobot/src/lerobot/policies/pi05/checkpoints/DualArm_FoldTowel_pi05_rtc_full_finetune/checkpoints/`。
+模型目录菜单和快捷脚本均支持 `<实验名>/checkpoints/<step>/pretrained_model/` 训练布局，
+也支持原有的 `<实验名>/<step>/pretrained_model/` 下载布局。
+在机器人机器使用时，可保留这两种目录结构之一。
+训练使用的 PaliGemma tokenizer 也需在机器人机器就绪；可放入 `pretrained_model/tokenizer/`，
+此时入口会自动采用它。没有内置 tokenizer 时，用 `--tokenizer /本机/tokenizer目录` 显式指定。
+
+权重和 tokenizer 就绪后，在机器人机器的仓库根目录执行：
+
+```bash
+# 只检查模型文件，不加载模型或连接设备
+bash src/lerobot/policies/pi05/deployment/run.sh DualArm_FoldTowel_pi05_rtc_full_finetune 050000 --check
+
+# 使用本次 50k 权重进行 RTC 单步部署
+bash src/lerobot/policies/pi05/deployment/run.sh DualArm_FoldTowel_pi05_rtc_full_finetune 050000 --run-mode step
+```
+
+新训练沿用 `chunk_size=50`、`rtc_training_max_delay=8`，对应现有 RTC 部署参数。
+显式选择 `rtc_full_finetune` 分组即可复用现有部署入口。`deploy_config.json` 中的默认组仍是历史
+`DualArm_FoldTowel_pi05_rtc_full`；其机器人、相机和起点路径属于机器人机器。
+
+## 原有部署入口与历史模型
+
 这是 `examples/flexiv/` 部署代码的一份副本，和 [本地 checkpoints](../checkpoints/README.md) 放在同一 `pi05/` 目录下。来源代码提交为 `ab265aae`；复制了部署入口、checkpoint 检查、RDK/RealSense 适配、回初始姿态入口及离线测试。
 
-旧实验 `DualArm_FoldTowel_pi05_rtc_full_gpu5_6` 实际冻结视觉编码器，本地已从 `rtc_full` 改名为 `DualArm_FoldTowel_pi05_rtc_frozen_vision`；旧版 25k/30k/40k/45k/50k 均在此目录。新全量训练来自 `101.132.150.51:1024` 的 `/mnt/work/dakun/outputs/rtc_full`，15k/20k/25k 保存在本地 `DualArm_FoldTowel_pi05_rtc_full`，保存配置均确认视觉编码器参与训练。RTC 默认选择新组的 25k；旧组使用 `DualArm_FoldTowel_pi05_rtc_frozen_vision` 显式选择。两组不能按相同步数混放。菜单中的 `full` 表示完整模型文件格式，视觉是否训练另外从保存的 `config.json` 显示。
+以下为原机器人机器的部署记录，具体已下载步数以该机器文件为准。旧实验 `DualArm_FoldTowel_pi05_rtc_full_gpu5_6` 实际冻结视觉编码器，本地已从 `rtc_full` 改名为 `DualArm_FoldTowel_pi05_rtc_frozen_vision`；原下载记录包含 25k/30k/40k/45k/50k。历史全量训练来自 `101.132.150.51:1024` 的 `/mnt/work/dakun/logs/projects/lerobot/rtc_full`，15k/20k/25k 使用本地组 `DualArm_FoldTowel_pi05_rtc_full`，保存配置均确认视觉编码器参与训练。RTC 默认选择此历史组的 `last`，原记录指向 25k；冻结组使用 `DualArm_FoldTowel_pi05_rtc_frozen_vision` 显式选择。两组不能按相同步数混放。菜单中的 `full` 表示完整模型文件格式，视觉是否训练另外从保存的 `config.json` 显示。
 
-模型菜单先列出 `checkpoints/` 下含有权重的实验文件夹，再列出所选文件夹中的 `<step>/pretrained_model/`，按训练步数从大到小排列。文件夹和步数根据本地文件自动发现；隐藏下载目录、没有模型配置或权重的目录不会列入，`last` 链接不重复显示。原 `examples/flexiv/` 入口仍可单独使用。以后修改两份部署代码时应核对差异。
+模型菜单先列出 `checkpoints/` 下含有权重的实验文件夹，再列出所选文件夹中的 `<step>/pretrained_model/` 或 `checkpoints/<step>/pretrained_model/`，按训练步数从大到小排列。文件夹和步数根据本地文件自动发现；隐藏下载目录、没有模型配置或权重的目录不会列入，`last` 链接不重复显示。原 `examples/flexiv/` 入口仍可单独使用。以后修改两份部署代码时应核对差异。
 
 RTC 与非 RTC 使用独立部署入口、模型加载和执行循环：`run.sh` → `deploy_dualarm.py`，使用 `deploy_config.json`，固定 trained RTC；`run_no_rtc.sh` → `deploy_dualarm_no_rtc.py`，使用 `deploy_config_no_rtc.json`，固定同步动作块推理。RTC 入口要求兼容的 RTC 训练权重；非 RTC 入口支持普通权重以及 RTC 训练权重，并在运行时设置 `rtc_config=None`，不会修改 checkpoint 中的训练配置或权重。非 RTC 配置默认指向 `DualArm_FoldTowel_pi05_no_rtc_full/025000`。两套共用设备适配层和基础文件检查。
 
@@ -28,6 +88,11 @@ deployment/
 ├── test_non_rtc_deploy.py         # 非 RTC 单步、连续、超时与起点等待测试
 └── test_replay_data.py           # 数据回放与模拟时钟测试
 ```
+
+训练侧新增本次 `rtc_full_finetune`，并保留 `rtc_frozen_vision`、`rtc_full`、`no_rtc_full` 三组，与这里的完整 checkpoint 组名一一对应；
+openpi joint 和 pose 使用各自独立入口。新训练名称与历史服务器目录的映射见
+[实验索引](../LOCAL_WORKFLOW.md) 和 [训练配置说明](../training/README.md)。
+保存配置和历史目录不因名称整理而改写。
 
 ## 检查本地 checkpoint
 

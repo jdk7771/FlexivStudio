@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# PI0.5 without RTC: full fine-tuning, physical GPUs 7,6,5,4, global batch 32.
+# DualArm_FoldTowel_pi05_no_rtc_full: full fine-tuning, default GPUs 3,2,1,0, global batch 32.
 set -euo pipefail
 
 task_training_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-export CUDA_VISIBLE_DEVICES=3,2,1,0
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-3,2,1,0}"
 export MASTER_PORT="${MASTER_PORT:-29518}"
 task_overrides=()
 [[ -z "${BATCH_SIZE:-}" ]] || task_overrides+=("--batch_size=$BATCH_SIZE")

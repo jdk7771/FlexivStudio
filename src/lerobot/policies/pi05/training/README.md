@@ -1,154 +1,135 @@
-# π0.5 训练：配置定义实验，bash 负责启动
+# PI05 训练入口
 
-每次训练应能对应一份完整的最终配置。这里使用 LeRobot 原生 JSON 配置保存数据、模型、LoRA、学习率、batch、step 和验证参数；bash 只选择 Python 环境、GPU 和启动进程数。
+本次新实验使用 `rtc_full_finetune`。`rtc_full` 保留历史 RTC 全量实验的训练参数，
+对应机器人机器上的 `checkpoints/DualArm_FoldTowel_pi05_rtc_full`；两份配置分别管理历史实验与本次实验。
+
+## rtc_full 与 rtc_full_finetune
+
+| 参数 | `rtc_full`：历史实验参数 | `rtc_full_finetune`：本次新实验 |
+| --- | --- | --- |
+| 配置 | [dualarm_fold_towel_rtc_full.json](configs/dualarm_fold_towel_rtc_full.json) | [dualarm_fold_towel_rtc_full_finetune.json](configs/dualarm_fold_towel_rtc_full_finetune.json) |
+| Bash | [train_dualarm_fold_towel_rtc_full.sh](train_dualarm_fold_towel_rtc_full.sh) | [train_dualarm_fold_towel_rtc_full_finetune.sh](train_dualarm_fold_towel_rtc_full_finetune.sh) |
+| 默认物理 GPU | `0,1,2,3` | `6,7` |
+| 每卡 batch × 卡数 | 8 × 4 | 16 × 2 |
+| 全局 batch / 梯度累积 | 32 / 1 | 32 / 1 |
+| 模型 dtype / 混合精度 | BF16 / BF16 | FP32 / BF16 |
+| 梯度检查点 | 开启 | 关闭 |
+| 学习率 | `1e-5` | `2.5e-5` |
+| 权重衰减 | `1e-5` | `0.01` |
+| warmup / decay steps | 1,000 / 50,000 | 1,000 / 50,000 |
+| 训练步数 | 50,000 | 50,000 |
+| checkpoint 保存间隔 | 2,500 | 10,000 |
+| 验证集 / 验证间隔 | `eval_split=0.08536585365853659` / 1,000 steps，最多 256 样本 | 不划分验证集，不测评 |
+| 默认端口 | `29519` | `29527` |
+| 实验目录名 | `DualArm_FoldTowel_pi05_rtc_full` | `DualArm_FoldTowel_pi05_rtc_full_finetune` |
+
+两者均从 `pi05_base` 开始训练视觉、VLM 和动作专家，无 LoRA，RTC delay 8、chunk 50；
+动作使用相对关节角与绝对夹爪宽度。双卡或四卡并行度、每卡 batch 都写在各自 JSON 中，
+Bash 选择 GPU 和端口。`CUDA_VISIBLE_DEVICES`、`MASTER_PORT` 和显式 CLI 参数可覆盖默认值。
+
+历史参数核对来源：服务器
+`/mnt/data/dakun/traingProcess/projects/lerobot/rtc_full/checkpoints/025000/pretrained_model/train_config.json`，
+并与 `022500` 保存配置交叉核对。
+25k 配置文件 SHA256 为 `6dead182d6920553450956fe9e612b618c01b044e1f870c8eed34c1ceea007b9`。
+`rtc_full` 模板复原这些训练参数，机器路径和新训练输出名称适配当前工作区。
+历史运行的原名为 `rtc_full`，历史目录与 checkpoint 保存配置继续保留。
+
+Git 提交 `fec5968` 曾把 `rtc_full` 模板改成新训练默认值，随后复制的 `rtc_full_finetune`
+一度与它重复。现在 `rtc_full` 按保存配置恢复历史参数；本次新设置只由 `rtc_full_finetune` 管理。
+本次 `scheduler_decay_steps=50000` 保留当前设置。恢复旧训练始终使用 checkpoint 保存的实际配置。
+
+## 本次 GPU 6、7 新训练
+
+```bash
+cd /mnt/data/dakun/workspace/lerobot
+
+# 预览，不加载模型或启动训练
+bash src/lerobot/policies/pi05/training/train_dualarm_fold_towel_rtc_full_finetune.sh --print-command
+
+# 开始新训练
+bash src/lerobot/policies/pi05/training/train_dualarm_fold_towel_rtc_full_finetune.sh
+```
+
+`resume=false`，从基础模型重新微调；`dataset.eval_split=0`、`eval_steps=0`、`env_eval_freq=0`，
+全部数据用于训练。`save_checkpoint=true`、`save_freq=10000`，训练 50,000 steps。
+
+按当前指定位置，`output_dir` 为：
 
 ```text
-training/
-├── configs/                           # 新训练的参数模板
-│   ├── dualarm_fold_towel_rtc_lora.json
-│   ├── dualarm_fold_towel_rtc_frozen_vision.json
-│   ├── dualarm_fold_towel_rtc_unfrozen_vision.json
-│   ├── dualarm_fold_towel_rtc_full.json
-│   ├── dualarm_fold_towel_rtc_lora_bs8.json
-│   └── dualarm_fold_towel_no_rtc_full.json
-├── train.sh                           # 公共入口：JSON → 单进程或 torchrun
-├── train_dualarm_fold_towel_rtc.sh     # LoRA / GPU 4 快捷入口
-├── train_dualarm_fold_towel_rtc_frozen_vision.sh # RTC，冻结视觉编码器 / GPU 6,7
-├── train_dualarm_fold_towel_rtc_unfrozen_vision.sh # RTC，全部参数训练 / GPU 6,7
-├── train_dualarm_fold_towel_rtc_full.sh # rtc_full，全部参数训练 / GPU 4,5，总 batch 32，无验证集
-├── train_dualarm_fold_towel_rtc_lora_bs8.sh # LoRA batch 8 / GPU 7
-├── train_dualarm_fold_towel_no_rtc_full.sh # 无 RTC 全量 / GPU 7,6,5,4
-├── setup_server.sh                    # 服务器新建环境
-└── server-constraints.txt
+/mnt/data/dakun/workspace/lerobot/src/lerobot/policies/pi05/checkpoints/DualArm_FoldTowel_pi05_rtc_full_finetune/
 ```
 
-## 现有配置
+训练器在 `output_dir/checkpoints/` 下保存 `010000`、`020000`、`030000`、`040000`、`050000`；
+每份含 `pretrained_model/` 和完整 `training_state/`，`last` 指向最新完整保存点。
+本次五份全部保留，不应用历史实验只保留最后两份的清理规则。
+输出目录已存在时，新训练会拒绝覆盖；重复实验可用 `OUTPUT_DIR` 指定另一个目录。
 
-E1/E2/E3 配置按 [实验记录](../../../../../examples/flexiv/docs/EXPERIMENT_LOG.md) 中保存的 `train_config.json` 提取，另提供 RTC 不冻结视觉编码器和四卡无 RTC 全量训练配置。它们用于**新训练**，不包含旧训练的恢复状态。
-
-| 模板                                   | 对应设置                               | 每卡 batch / 全局 batch | 学习率 | 默认 GPU（快捷脚本） |
-| -------------------------------------- | -------------------------------------- | ----------------------- | ------ | -------------------- |
-| `dualarm_fold_towel_rtc_lora.json`     | E1，动作专家和投影 LoRA，rank/alpha 32 | 16 / 16                 | `1e-4` | `4`                  |
-| `dualarm_fold_towel_rtc_frozen_vision.json` | E2 的冻结方式：冻结视觉编码器，其余参数训练，无 LoRA | 8 / 16 | `1e-5` | `6,7` |
-| `dualarm_fold_towel_rtc_unfrozen_vision.json` | RTC，视觉编码器、VLM 和动作专家全部训练，无 LoRA | 8 / 16 | `1e-5` | `6,7` |
-| `dualarm_fold_towel_rtc_full.json` | `rtc_full`，全模型训练，无 LoRA、无验证集，其他模型参数采用 PI05Config 默认值 | 16 / 32 | `2.5e-5` | `4,5` |
-| `dualarm_fold_towel_rtc_lora_bs8.json` | E3，同 E1，batch 8                     | 8 / 8                   | `1e-4` | `7`                  |
-| `dualarm_fold_towel_no_rtc_full.json` | 无 RTC，全模型训练，包含视觉编码器     | 8 / 32                  | `1e-5` | `7,6,5,4`            |
-
-除 `rtc_full` 外，共同参数：BF16、梯度检查点、50,000 step、每 2,500 step 保存、每 1,000 step 验证最多 256 个样本。动作是关节相对当前观测、夹爪绝对值，chunk 50。所有 RTC 配置的 `policy.rtc_training_max_delay=8`；四卡无 RTC 配置设为 `policy.rtc_config=null`、`policy.rtc_training_max_delay=0`，关闭 LoRA 并训练全部模型参数。
-
-RTC 的两组非 LoRA 配置通过 `policy.freeze_vision_encoder` 区分：`frozen_vision=true`，`unfrozen_vision=false`；两组的 `train_expert_only=false`、`use_peft=false`、`peft=null`。除冻结开关、实验名和输出目录外，两份 JSON 完全相同，以便比较。它们均从 `pi05_base` 开始，分别保存到 `/mnt/work/dakun/outputs/DualArm_FoldTowel_pi05_rtc_frozen_vision` 和 `/mnt/work/dakun/outputs/DualArm_FoldTowel_pi05_rtc_unfrozen_vision`，可通过 `OUTPUT_DIR` 覆盖。
-
-原来冻结视觉编码器的 RTC 实验使用明确命名的 `rtc_frozen_vision` 入口；服务器历史输出目录保留原名，续训仍读取其 `train_config.json`；本地旧模型目录由 `checkpoints/rtc_full` 改为 `checkpoints/rtc_frozen_vision`，旧版部署时显式选择 `rtc_frozen_vision`。新四卡全模型实验使用 `checkpoints/rtc_full`，本次从 1024 服务器下载了 15k/20k/25k，RTC 部署默认选择新组 25k；两组模型不按相同步数混放。`rtc_frozen_vision` 和 `rtc_unfrozen_vision` 两卡入口默认使用 GPU `6,7`，可用 `CUDA_VISIBLE_DEVICES` 覆盖；冻结版默认端口 `29517`，不冻结版默认 `29519`，均可通过 `MASTER_PORT` 覆盖。
-
-`train_dualarm_fold_towel_rtc_full.sh` 和 `dualarm_fold_towel_rtc_full.json` 用于 **GPU 4,5、不冻结视觉编码器** 的 RTC 全模型训练：`job_name=rtc_full`，输出 `/mnt/work/dakun/outputs/rtc_full`，默认端口 `29519`。双卡并行度和全局 batch 32 写在 Bash 中，启动时换算为每卡 batch 16、梯度累积 1；JSON 的 `batch_size=16` 遵循训练器的每卡语义。从 `pi05_base` 开始训练 50,000 step，每 10,000 step 保存。保留 RTC delay 8 和相对关节 / 绝对夹爪动作，其余模型参数采用 `PI05Config` 默认值：`dtype=float32`、关闭梯度检查点、学习率 `2.5e-5`、权重衰减 `0.01`、warmup 1,000 step、decay 30,000 step、最终学习率 `2.5e-6`。运行时仍采用 BF16 混合精度。`dataset.eval_split=0`、`eval_steps=0`、`env_eval_freq=0`，全部 123 个 episode 用于训练，不留验证 / 测试集。
-
-已有 `rtc_full` checkpoint 原先采用四卡、每卡 batch 8。切换为双卡、每卡 batch 16 续训时，从 checkpoint 配置启动并显式覆盖并行度和 batch；全局 batch 仍为 32，优化器、调度器和 step 从 checkpoint 恢复。卡数变化后，不保证随机采样与原四卡运行逐位一致：
+中断后按实际已有步数续训，例如 20k：
 
 ```bash
-CUDA_VISIBLE_DEVICES=4,5 MASTER_PORT=29519 \
+CUDA_VISIBLE_DEVICES=6,7 MASTER_PORT=29527 \
 bash src/lerobot/policies/pi05/training/train.sh \
-  /mnt/work/dakun/outputs/rtc_full/checkpoints/last/pretrained_model/train_config.json \
-  --resume=true --parallelism.dp_replicate=2 --batch_size=16
+  /mnt/data/dakun/workspace/lerobot/src/lerobot/policies/pi05/checkpoints/DualArm_FoldTowel_pi05_rtc_full_finetune/checkpoints/020000/pretrained_model/train_config.json \
+  --resume=true
 ```
 
-四卡无 RTC 配置固定使用物理 GPU `7,6,5,4`，每卡 batch 8、梯度累积 1，全局 batch 32；默认端口为 `29518`。输出目录为 `/mnt/work/dakun/outputs/DualArm_FoldTowel_pi05_no_rtc_full_gpu7_6_5_4`，可用 `OUTPUT_DIR` 指定另一次实验的目录。快捷脚本兼容 `BATCH_SIZE` 和 `TRAIN_STEPS` 环境变量；显式命令行参数优先。
+## 其他保留入口
 
-数据为 `local/DualArm_FoldTowel_joint_rtc`，123 个 episode。除 `rtc_full` 使用全部数据外，其他模板的 `dataset.eval_split=0.08536585365853659` 与原转换清单按最后 10% 源 scene 留出验证集的结果一致：112 个训练 episode、11 个验证 episode。更换数据后应一起检查 `repo_id`、`root`、`eval_split` 和 `eval_steps`。
+| 简称 | Bash / JSON 后缀 | 含义 | 默认 GPU | 每卡 batch × 卡数 |
+| --- | --- | --- | --- | --- |
+| `rtc_full` | `dualarm_fold_towel_rtc_full` | 历史 RTC 全模型训练参数 | `0,1,2,3` | 8 × 4 |
+| `rtc_frozen_vision` | `dualarm_fold_towel_rtc_frozen_vision` | RTC，冻结视觉，其余参数训练 | `6,7` | 8 × 2 |
+| `no_rtc_full` | `dualarm_fold_towel_no_rtc_full` | 无 RTC，全模型训练 | `3,2,1,0` | 8 × 4 |
 
-## 先看命令，再启动
+配置在 `configs/<后缀>.json`，脚本为 `train_<后缀>.sh`。
+旧 LoRA、LoRA batch 8 与 `rtc_unfrozen_vision` 入口已移出当前模板，原配置可在 Git 历史中查阅。
+`rtc_unfrozen_vision` 原总 batch 16，与本次总 batch 32 的实验分开记录。
 
-从仓库根目录执行。`--print-command` 只读 JSON 并打印命令，不导入训练器、不读取训练数据或加载权重：
+`rtc_full` 新运行也保存到本仓库 `pi05/checkpoints/DualArm_FoldTowel_pi05_rtc_full/`，
+历史模型保留在各机器原目录。冻结视觉和无 RTC 模板仍输出到
+`/mnt/data/dakun/traingProcess/projects/lerobot/<实验名>/`。
+冻结视觉与无 RTC 模板均启用留出集和每 1,000 步验证；无 RTC 历史 32.5k 保存配置实际关闭了验证，
+因此其当前模板只代表新运行设置。
+
+## 历史权重与续训
+
+| 机器人机器上的组名 | 服务器历史实验目录（相对 `traingProcess/projects/lerobot`） | 已核实的历史设置 |
+| --- | --- | --- |
+| `DualArm_FoldTowel_pi05_rtc_full` | `rtc_full` | 25k：全模型 RTC，4 卡 × batch 8 |
+| `DualArm_FoldTowel_pi05_rtc_frozen_vision` | `DualArm_FoldTowel_pi05_rtc_full_gpu5_6` | 名含 full，实际冻结视觉，2 卡 × batch 8 |
+| `DualArm_FoldTowel_pi05_no_rtc_full` | `DualArm_FoldTowel_pi05_no_rtc_full_gpu7_6_5_4` | 32.5k：全模型无 RTC，关闭验证 |
+
+续训使用原 checkpoint 的 `pretrained_model/train_config.json` 与同级 `training_state/`。
+只下载部署权重不能恢复优化器、调度器与随机状态。
+如果保存配置里的旧机器路径已失效，通过 `DATASET_ROOT`、`MODEL_PATH`、`TOKENIZER_PATH`
+和 `--output_dir=...` 显式覆盖到当前实验目录。改变 GPU 数量时一并调整并行度与每卡 batch；
+即使总 batch 相同，也不保证采样顺序逐位一致。
+来源与保存结构见 [checkpoint 说明](../checkpoints/README.md)，模型选择见 [部署说明](../deployment/README.md)。
+
+## 环境、监控与目录
+
+| 文件 | 用途 |
+| --- | --- |
+| `train.sh` | 公共 JSON 启动器、机器路径覆盖、`--print-command` |
+| `configs/`、`train_dualarm_*.sh` | 四套具名实验与对应快捷入口 |
+| `setup_server.sh`、`server-constraints.txt` | 新环境安装与依赖约束 |
+| `monitor_loss.py`、`loss_dashboard.html` | loss 采样、曲线和页面 |
+
+现有 PI05 Python 为 `/mnt/data/dakun/envs/lerobot/bin/python`；无需重建环境。
+数据在 `/mnt/data/dakun/datasets/DualArm_FoldTowel_joint_rtc`，base 和 tokenizer 分别在
+`/mnt/data/dakun/model/pi05_base`、`/mnt/data/dakun/model/paligemma-3b-pt-224`。
+`LEROBOT_PYTHON` 可选择解释器；环境索引见 `/mnt/data/dakun/envs/repo-environments.tsv`。
+
+监控默认对应本次 `rtc_full_finetune`；显式指定其他实验用 `--output-dir`：
 
 ```bash
-pi05_training=src/lerobot/policies/pi05/training
-bash "$pi05_training/train_dualarm_fold_towel_rtc.sh" --print-command
-bash "$pi05_training/train_dualarm_fold_towel_rtc_frozen_vision.sh" --print-command
-bash "$pi05_training/train_dualarm_fold_towel_rtc_unfrozen_vision.sh" --print-command
-bash "$pi05_training/train_dualarm_fold_towel_rtc_full.sh" --print-command
-bash "$pi05_training/train_dualarm_fold_towel_rtc_lora_bs8.sh" --print-command
-bash "$pi05_training/train_dualarm_fold_towel_no_rtc_full.sh" --print-command
+/mnt/data/dakun/envs/lerobot/bin/python src/lerobot/policies/pi05/training/monitor_loss.py --serve
 ```
 
-四卡无 RTC 训练启动后，可在另一个终端监控训练 loss：
+默认端口 8766，可通过 VS Code 转发。采样曲线与终端训练窗口均值口径不同，停止监控不会停止训练。
+旧目录迁移备份在 `/mnt/data/dakun/traingProcess/projects/lerobot/maintenance/`。
 
-```bash
-python src/lerobot/policies/pi05/training/monitor_loss.py
-```
-
-脚本自动找到对应的 rank 0 进程，每 30 秒读取进度和一个 batch 的训练 loss，持续保存到当前输出目录的 `train_loss_monitor.csv`。重启监控会继续保留已有记录。采样值是 rank 0 的单 batch loss，与终端输出的多卡训练窗口均值分别显示。验证 loss 另外保存在 `eval_loss_monitor.csv`，关闭验证仍会继续采集训练 loss。`Ctrl+C` 只停止监控，不影响训练。使用 `--once` 可只查看一次；`--interval=60` 可调整采样间隔。
-
-需要浏览器实时曲线和完整训练配置时运行：
-
-```bash
-python src/lerobot/policies/pi05/training/monitor_loss.py --serve
-```
-
-然后打开 `http://127.0.0.1:8766/`。页面默认显示当前训练的训练 loss，可切换查看验证历史。训练/验证条数根据数据集元数据和运行中的实际参数显示，包含命令行覆盖参数。远程 VS Code 连接服务器时，转发端口 `8766` 后在本机浏览器打开同一地址。网页每 5 秒读取状态，监控进程每 30 秒采样并保存训练数据。横轴从 0 显示到当前训练步；之前未记录的区间以灰色标明，不补造数据或跨缺口连线。要保存从开始起的采样历史，应在训练启动后同时运行监控。
-
-也可以直接选择任意实验配置：
-
-```bash
-CUDA_VISIBLE_DEVICES=6,7 \
-bash src/lerobot/policies/pi05/training/train.sh \
-  src/lerobot/policies/pi05/training/configs/dualarm_fold_towel_rtc_frozen_vision.json \
-  --print-command
-```
-
-确认后去掉 `--print-command` 才会启动。进程数由配置和命令行覆盖后的 `parallelism.dp_replicate * parallelism.dp_shard` 决定；`rtc_full` 的两卡并行度由快捷 Bash 脚本传入。两卡配置需要提供两张可用 GPU，`batch_size` 表示每卡 batch。
-
-## 每次实验怎么保存配置
-
-1. 从 `configs/` 复制一个 JSON，使用能识别实验的文件名；修改 `job_name`、`seed`、学习率或其他实验参数。
-2. 为该次运行设置独立 `output_dir`。模板的 `output_dir=null` 使用 LeRobot 自动生成的 `outputs/train/日期/时间_job_name/`，在仓库根目录下；也可明确写入服务器 `/mnt/work/dakun/outputs/你的新实验目录`。
-3. 用 `train.sh 你的配置.json --print-command` 检查，然后启动。
-4. checkpoint 的 `pretrained_model/train_config.json` 保存**包含默认值和命令行覆盖的实际配置**，部署与恢复训练以这份配置为准。
-
-因此，重复试验可以复用模板；改变实验设置时另存配置；恢复同一次训练使用 checkpoint 保存的配置。GPU 编号属于启动环境，保存配置时也应在实验记录里记下 GPU、代码提交和启动命令。
-
-临时覆盖仍支持 LeRobot 原生参数，例如：
-
-```bash
-CUDA_VISIBLE_DEVICES=4 \
-bash src/lerobot/policies/pi05/training/train.sh \
-  src/lerobot/policies/pi05/training/configs/dualarm_fold_towel_rtc_lora.json \
-  --print-command --seed=2000 --job_name=fold_towel_lora_seed2000
-```
-
-常用机器路径可用 `LEROBOT_PYTHON`、`DATASET_ROOT`、`MODEL_PATH`、`TOKENIZER_PATH`、`OUTPUT_DIR` 覆盖；显式 `--key=value` 优先于这些环境变量。正式实验优先把算法参数写入 JSON。
-
-## 恢复已有训练
-
-直接把 **checkpoint 的配置**作为第一个参数，加 `--resume=true`。不要用新训练模板替代它：
-
-```bash
-CUDA_VISIBLE_DEVICES=6,7 \
-bash src/lerobot/policies/pi05/training/train.sh \
-  /mnt/work/dakun/outputs/DualArm_FoldTowel_pi05_rtc_full_gpu5_6/checkpoints/015000/pretrained_model/train_config.json \
-  --resume=true --print-command
-```
-
-将 step 替换为实际恢复点。原输出路径从该配置读取；同级 `training_state/` 必须完整，才能恢复优化器、调度器、随机状态等。新训练模板没有设置 `policy.use_peft=true`：LoRA 是在加载 base 后由训练器应用的；checkpoint 配置中的这个字段则记录已训练 adapter，不能盲目复制为新训练配置。
-
-## 服务器路径与环境
-
-| 内容      | 当前服务器路径                                  |
-| --------- | ----------------------------------------------- |
-| 代码      | `/mnt/work/dakun/lerobot`                       |
-| Python    | `/mnt/work/dakun/conda-envs/lerobot/bin/python` |
-| 数据      | `/mnt/work/dakun/DualArm_FoldTowel_joint_rtc`   |
-| PI05 base | `/mnt/work/dakun/models/pi05_base`              |
-| tokenizer | `/mnt/work/dakun/models/paligemma-3b-pt-224`    |
-
-`LEROBOT_PYTHON` 可以显式指定 Python；否则依次使用已激活环境、仓库 `.venv`、工作目录下已有的 `conda-envs/lerobot`，最后使用 `python3`。配置检查只需要 Python 标准库。
-
-现有训练环境继续使用即可。新建服务器环境时：
-
-```bash
-bash src/lerobot/policies/pi05/training/setup_server.sh
-export LEROBOT_PYTHON="$PWD/.venv/bin/python"
-```
-
-安装使用 Python 3.12、Torch 2.7.1 + CUDA 11.8 和对应 TorchCodec，约束见 `server-constraints.txt`。本地 RTX 5090 部署使用 CUDA 12.8，安装入口为 [Flexiv 本地环境](../../../../../examples/flexiv/setup/setup_local_deploy.sh)。
-
-原 `examples/flexiv/train_*.sh` 和 `setup_server.sh` 已移到此目录，历史训练输出和 checkpoint 路径保持原位置。
+官方 OpenPI 的 [joint 训练](../../openpi/training/README.md) 与
+[pose 训练](../../openpi/training_pose_delta/README.md) 使用独立模型实现、配置与
+`/mnt/data/dakun/envs/openpi` 环境。其 checkpoint 使用 OpenPI 自己的部署入口。
+历史实验记录见 [EXPERIMENT_LOG.md](../../../../../examples/flexiv/docs/EXPERIMENT_LOG.md)。

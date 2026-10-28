@@ -33,7 +33,10 @@ def require_compatible_rdk() -> None:
 
 def available_checkpoints(models_root: Path) -> list[tuple[str, int, Path, str]]:
     choices = []
-    for path in models_root.glob("[0-9]*/pretrained_model"):
+    for path in (
+        *models_root.glob("[0-9]*/pretrained_model"),
+        *models_root.glob("checkpoints/[0-9]*/pretrained_model"),
+    ):
         step = path.parent.name
         if not step.isdigit():
             continue
@@ -58,7 +61,7 @@ def available_checkpoint_folders(models_root: Path) -> list[Path]:
 
 
 def choose_checkpoint(models_root: Path) -> Path | None:
-    folders = available_checkpoint_folders(models_root)
+    folders = [] if available_checkpoints(models_root) else available_checkpoint_folders(models_root)
     if folders:
         print(f"\n选择权重文件夹（{models_root}）：", flush=True)
         for index, folder in enumerate(folders, 1):

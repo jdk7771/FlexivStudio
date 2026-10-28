@@ -1,14 +1,14 @@
 {
   "dataset": {
     "repo_id": "local/DualArm_FoldTowel_joint_rtc",
-    "root": "/mnt/work/dakun/DualArm_FoldTowel_joint_rtc",
+    "root": "/mnt/work/dakun/datasets/DualArm_FoldTowel_joint_rtc",
     "video_backend": "torchcodec",
     "eval_split": 0.08536585365853659
   },
   "policy": {
     "type": "pi05",
-    "pretrained_path": "/mnt/work/dakun/models/pi05_base",
-    "text_tokenizer_name": "/mnt/work/dakun/models/paligemma-3b-pt-224",
+    "pretrained_path": "/mnt/work/dakun/model/pi05_base",
+    "text_tokenizer_name": "/mnt/work/dakun/model/paligemma-3b-pt-224",
     "device": "cuda",
     "dtype": "bfloat16",
     "push_to_hub": false,
@@ -27,7 +27,7 @@
     "scheduler_warmup_steps": 1000,
     "scheduler_decay_steps": 50000
   },
-  "output_dir": "/mnt/work/dakun/outputs/DualArm_FoldTowel_pi05_rtc_frozen_vision",
+  "output_dir": "/mnt/work/dakun/traingProcess/projects/lerobot/DualArm_FoldTowel_pi05_rtc_frozen_vision",
   "job_name": "DualArm_FoldTowel_pi05_rtc_frozen_vision",
   "seed": 1000,
   "batch_size": 8,

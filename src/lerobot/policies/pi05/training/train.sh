@@ -11,16 +11,19 @@ if [[ $# -eq 0 || "${1:-}" == --help || "${1:-}" == -h ]]; then
 fi
 
 task_training_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-task_repo_root="$(cd -- "$task_training_dir/../../../../.." && pwd)"
+task_repo_root="$(cd -- "$task_training_dir/../../../../.." && pwd -P)"
 task_workspace="$(dirname -- "$task_repo_root")"
+if [[ "$(basename -- "$task_workspace")" == repos || "$(basename -- "$task_workspace")" == workspace ]]; then
+    task_workspace="$(dirname -- "$task_workspace")"
+fi
 task_python="${LEROBOT_PYTHON:-}"
 if [[ -z "$task_python" ]]; then
     if [[ -n "${VIRTUAL_ENV:-${CONDA_PREFIX:-}}" ]]; then
         task_python="${VIRTUAL_ENV:-$CONDA_PREFIX}/bin/python"
     elif [[ -x "$task_repo_root/.venv/bin/python" ]]; then
         task_python="$task_repo_root/.venv/bin/python"
-    elif [[ -x "$task_workspace/conda-envs/lerobot/bin/python" ]]; then
-        task_python="$task_workspace/conda-envs/lerobot/bin/python"
+    elif [[ -x "$task_workspace/envs/lerobot/bin/python" ]]; then
+        task_python="$task_workspace/envs/lerobot/bin/python"
     else
         task_python="$(command -v python3)"
     fi
@@ -74,7 +77,8 @@ task_config="${task_config_fields[0]}"
 task_workers="${task_config_fields[1]}"
 
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
-export HF_HOME="${HF_HOME:-$task_workspace/huggingface}"
+export HF_HOME="${HF_HOME:-$task_workspace/datasets/cache/huggingface}"
+export PYTHONPATH="$task_repo_root/src${PYTHONPATH:+:$PYTHONPATH}"
 export TOKENIZERS_PARALLELISM=false
 task_site_packages="$("$task_python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
 if [[ -d "$task_site_packages/nvidia" ]]; then

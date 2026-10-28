@@ -1,16 +1,16 @@
 {
   "dataset": {
     "repo_id": "local/DualArm_FoldTowel_joint_rtc",
-    "root": "/mnt/work/dakun/DualArm_FoldTowel_joint_rtc",
+    "root": "/mnt/work/dakun/datasets/DualArm_FoldTowel_joint_rtc",
     "video_backend": "torchcodec",
-    "eval_split": 0.0
+    "eval_split": 0.08536585365853659
   },
   "policy": {
     "type": "pi05",
-    "pretrained_path": "/mnt/work/dakun/models/pi05_base",
-    "text_tokenizer_name": "/mnt/work/dakun/models/paligemma-3b-pt-224",
+    "pretrained_path": "/mnt/work/dakun/model/pi05_base",
+    "text_tokenizer_name": "/mnt/work/dakun/model/paligemma-3b-pt-224",
     "device": "cuda",
-    "dtype": "float32",
+    "dtype": "bfloat16",
     "push_to_hub": false,
     "use_relative_actions": true,
     "relative_exclude_joints": [
@@ -21,23 +21,30 @@
     "use_peft": false,
     "freeze_vision_encoder": false,
     "train_expert_only": false,
-    "gradient_checkpointing": false,
-    "optimizer_lr": 2.5e-05,
-    "optimizer_weight_decay": 0.01,
+    "gradient_checkpointing": true,
+    "optimizer_lr": 1e-05,
+    "optimizer_weight_decay": 1e-05,
     "scheduler_warmup_steps": 1000,
-    "scheduler_decay_steps": 30000
+    "scheduler_decay_steps": 50000,
+    "optimizer_betas": [
+      0.9,
+      0.95
+    ],
+    "optimizer_eps": 1e-08,
+    "optimizer_grad_clip_norm": 1.0,
+    "scheduler_decay_lr": 2.5e-06
   },
-  "output_dir": "/mnt/work/dakun/outputs/rtc_full",
-  "job_name": "rtc_full",
+  "output_dir": "/mnt/data/dakun/workspace/lerobot/src/lerobot/policies/pi05/checkpoints/DualArm_FoldTowel_pi05_rtc_full",
+  "job_name": "DualArm_FoldTowel_pi05_rtc_full",
   "seed": 1000,
-  "batch_size": 16,
+  "batch_size": 8,
   "num_workers": 4,
   "steps": 50000,
-  "save_freq": 10000,
+  "save_freq": 2500,
   "log_freq": 50,
   "env_eval_freq": 0,
-  "eval_steps": 0,
-  "max_eval_samples": 0,
+  "eval_steps": 1000,
+  "max_eval_samples": 256,
   "accelerator": {
     "mixed_precision": "bf16",
     "gradient_accumulation": {
@@ -47,5 +54,11 @@
   "peft": null,
   "wandb": {
     "enable": false
+  },
+  "resume": false,
+  "save_checkpoint": true,
+  "parallelism": {
+    "dp_replicate": 4,
+    "dp_shard": 1
   }
 }

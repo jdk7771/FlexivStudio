@@ -1,16 +1,16 @@
 {
   "dataset": {
     "repo_id": "local/DualArm_FoldTowel_joint_rtc",
-    "root": "/mnt/work/dakun/DualArm_FoldTowel_joint_rtc",
+    "root": "/mnt/data/dakun/datasets/DualArm_FoldTowel_joint_rtc",
     "video_backend": "torchcodec",
-    "eval_split": 0.08536585365853659
+    "eval_split": 0.0
   },
   "policy": {
     "type": "pi05",
-    "pretrained_path": "/mnt/work/dakun/models/pi05_base",
-    "text_tokenizer_name": "/mnt/work/dakun/models/paligemma-3b-pt-224",
+    "pretrained_path": "/mnt/data/dakun/model/pi05_base",
+    "text_tokenizer_name": "/mnt/data/dakun/model/paligemma-3b-pt-224",
     "device": "cuda",
-    "dtype": "bfloat16",
+    "dtype": "float32",
     "push_to_hub": false,
     "use_relative_actions": true,
     "relative_exclude_joints": [
@@ -21,25 +21,28 @@
     "use_peft": false,
     "freeze_vision_encoder": false,
     "train_expert_only": false,
-    "gradient_checkpointing": true,
-    "optimizer_lr": 1e-05,
-    "optimizer_weight_decay": 1e-05,
+    "gradient_checkpointing": false,
+    "optimizer_lr": 2.5e-05,
+    "optimizer_weight_decay": 0.01,
     "scheduler_warmup_steps": 1000,
     "scheduler_decay_steps": 50000
   },
-  "output_dir": "/mnt/work/dakun/outputs/DualArm_FoldTowel_pi05_rtc_unfrozen_vision",
-  "job_name": "DualArm_FoldTowel_pi05_rtc_unfrozen_vision",
+  "output_dir": "/mnt/data/dakun/workspace/lerobot/src/lerobot/policies/pi05/checkpoints/DualArm_FoldTowel_pi05_rtc_full_finetune",
+  "job_name": "DualArm_FoldTowel_pi05_rtc_full_finetune",
+  "resume": false,
   "seed": 1000,
-  "batch_size": 8,
+  "batch_size": 16,
   "num_workers": 4,
   "steps": 50000,
-  "save_freq": 2500,
+  "save_checkpoint": true,
+  "save_freq": 10000,
   "log_freq": 50,
   "env_eval_freq": 0,
-  "eval_steps": 1000,
-  "max_eval_samples": 256,
+  "eval_steps": 0,
+  "max_eval_samples": 0,
   "parallelism": {
-    "dp_replicate": 2
+    "dp_replicate": 2,
+    "dp_shard": 1
   },
   "accelerator": {
     "mixed_precision": "bf16",
