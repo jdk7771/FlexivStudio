@@ -2,6 +2,8 @@
 
 对齐日期：2026-10-25（北京时间）。目标仓库：`https://github.com/jdk7771/FlexivStudio`，分支 `main`。
 
+当前训练入口以 [实验索引](../../../src/lerobot/policies/pi05/LOCAL_WORKFLOW.md) 为准；以下为 2026-10-25 的历史记录，其中 LoRA 入口已从当前训练列表移除。
+
 ## 对齐前的逐文件比较
 
 - 本地：`/home/nematrix/snap/lerobot`，上游基线提交 `3991580a`。

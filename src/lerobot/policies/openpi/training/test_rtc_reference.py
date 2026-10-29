@@ -144,7 +144,7 @@ def test_running_source_snapshot_and_installed_patch_match_reviewed_code():
     import transformers
 
     root = Path(__file__).resolve().parents[1]
-    source = Path("/mnt/work/dakun/outputs/openpi_pi05_dualarm_fold_towel_rtc_full/source")
+    source = Path("/mnt/work/dakun/logs/projects/lerobot/openpi_pi05_dualarm_fold_towel_rtc_full/source")
     for name in ("runtime.py", "train.py"):
         assert (root / "training" / name).read_bytes() == (source / "training" / name).read_bytes()
     assert (root / "src/openpi/models_pytorch/pi0_pytorch.py").read_bytes() == (

@@ -1,4 +1,4 @@
-"""Independent four-GPU full fine-tuning of OpenPI pi0.5 on TCP pose deltas + RTC.
+"""Independent two/four-GPU full fine-tuning of OpenPI pi0.5 on TCP pose deltas without RTC.
 
 The model is openpi.models_pytorch.pi0_pytorch.PI0Pytorch, never LeRobot's policy.
 LeRobot supplies only the existing v3 dataset reader. --check-data is CPU-only.
@@ -28,7 +28,20 @@ import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler, Subset
 
-from runtime import Collator, learning_rate, load_pose_stats, model_config, observation_to_device, rtc_loss, sample_prefix_mask, split_episodes
+from runtime import Collator, learning_rate, load_pose_stats, model_config, observation_to_device, pose_loss, split_episodes
+
+
+def validate_ddp_config(config: dict, world_size: int | None = None) -> int:
+    topology = config["parallelism"]
+    ranks = topology.get("dp_replicate")
+    if type(ranks) is not int or ranks not in (2, 4) or topology != {"dp_replicate": ranks, "dp_shard": 1}:
+        raise ValueError("Pose training expects two or four DDP ranks without sharding.")
+    batch_size = config["batch_size"]
+    if type(batch_size) is not int or batch_size <= 0:
+        raise ValueError("batch_size must be a positive per-rank integer.")
+    if world_size is not None and world_size != ranks:
+        raise ValueError(f"WORLD_SIZE={world_size} must match configured DDP ranks={ranks}.")
+    return ranks
 
 
 def read_config(path: str | Path) -> dict:
@@ -40,12 +53,11 @@ def read_config(path: str | Path) -> dict:
         raise ValueError("This entry point implements full-model training without LoRA.")
     if config["accelerator"]["gradient_accumulation"]["steps"] != 1:
         raise ValueError("This experiment expects gradient accumulation = 1.")
-    if config["parallelism"] != {"dp_replicate": 4, "dp_shard": 1}:
-        raise ValueError("This experiment expects four DDP ranks.")
+    validate_ddp_config(config)
     if config["wandb"]["enable"] or config["env_eval_freq"] != 0:
         raise ValueError("Only local loss logging and offline validation are supported here.")
-    if not 0 <= p["rtc_training_max_delay"] < p["chunk_size"]:
-        raise ValueError("RTC max delay must be smaller than the action horizon.")
+    if p.get("rtc_training_max_delay", 0) != 0 or p.get("rtc_config") is not None:
+        raise ValueError("This pose entry point disables RTC; use delay 0 and no RTC configuration.")
     pose = config.get("pose_delta", {})
     expected = {"schema_version": 1, "stored_pose": "xyz_quat_wxyz_gripper_per_arm",
                 "state_rotation": "rotation_6d_columns", "action_rotation": "rotvec",
@@ -165,9 +177,8 @@ def evaluate(model: torch.nn.Module, batches: DataLoader, device: torch.device, 
         for obs, actions in batches:
             obs = observation_to_device(obs, device)
             actions = actions.to(device)
-            prefix = sample_prefix_mask(actions, config["policy"]["rtc_training_max_delay"])
             with torch.autocast("cuda", dtype=torch.bfloat16):
-                loss = rtc_loss(model(obs, actions, prefix_mask=prefix), prefix, config["pose_delta"]["action_dim"])
+                loss = pose_loss(model(obs, actions), config["pose_delta"]["action_dim"])
             total += loss.item() * len(actions)
             count += len(actions)
     finally:
@@ -198,8 +209,7 @@ def train(config: dict, resume: Path | None) -> None:
         if stats_path.read_bytes() != (checkpoint_path / "pose_delta_stats.json").read_bytes():
             raise ValueError("Pose normalization statistics changed since this checkpoint.")
     rank, local_rank = int(os.environ["RANK"]), int(os.environ["LOCAL_RANK"])
-    if int(os.environ["WORLD_SIZE"]) != 4:
-        raise ValueError("Launch this config with torchrun --nproc-per-node=4.")
+    world_size = validate_ddp_config(config, int(os.environ["WORLD_SIZE"]))
     torch.cuda.set_device(local_rank)
     device = torch.device("cuda", local_rank)
     dist.init_process_group("nccl", device_id=device)
@@ -227,7 +237,7 @@ def train(config: dict, resume: Path | None) -> None:
         (output / "split.json").write_text(json.dumps(split, indent=2) + "\n")
         logging.info("Split: %d train episodes / %d eval episodes; %d validation frames",
                      len(train_ids), len(eval_ids), len(validation))
-    sampler = DistributedSampler(dataset, num_replicas=4, rank=rank, seed=config["seed"], shuffle=True)
+    sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, seed=config["seed"], shuffle=True)
     batches = loader(dataset, collator, config, sampler)
     eval_batches = loader(validation, collator, config, evaluation=True) if rank == 0 else None
     model = PI0Pytorch(model_config(config))
@@ -258,8 +268,10 @@ def train(config: dict, resume: Path | None) -> None:
     running = torch.zeros((), device=device)
     window = 0
     started = time.monotonic()
-    logging.info("Rank %d: official PI0Pytorch full model, 14D pose deltas (%s), 20D state, batch %d/rank, RTC delay %d",
-                 rank, config["pose_delta"]["delta_frame"], config["batch_size"], p["rtc_training_max_delay"])
+    logging.info("Rank %d: official pi0.5 full model, 14D pose deltas (%s), 20D state, "
+                 "batch %d/rank, global batch %d, RTC disabled",
+                 rank, config["pose_delta"]["delta_frame"], config["batch_size"],
+                 config["batch_size"] * world_size)
     while step < config["steps"]:
         sampler.set_epoch(epoch)
         for batch_index, (obs, actions) in enumerate(batches):
@@ -270,13 +282,12 @@ def train(config: dict, resume: Path | None) -> None:
                 saved_rng = None
             obs = observation_to_device(obs, device)
             actions = actions.to(device, non_blocking=True)
-            prefix = sample_prefix_mask(actions, p["rtc_training_max_delay"])
             lr = learning_rate(step, p)
             for group in optimizer.param_groups:
                 group["lr"] = lr
             optimizer.zero_grad(set_to_none=True)
             with torch.autocast("cuda", dtype=torch.bfloat16):
-                loss = rtc_loss(ddp(obs, actions, prefix_mask=prefix), prefix, len(collator.names))
+                loss = pose_loss(ddp(obs, actions), len(collator.names))
             if not torch.isfinite(loss):
                 raise FloatingPointError(f"Nonfinite loss at step {step} on rank {rank}")
             loss.backward()
@@ -287,7 +298,7 @@ def train(config: dict, resume: Path | None) -> None:
             window += 1
             if step % config["log_freq"] == 0 or step == config["steps"]:
                 dist.all_reduce(running)
-                value = running.item() / (window * 4)
+                value = running.item() / (window * world_size)
                 if rank == 0:
                     logging.info("step=%d loss=%.6f lr=%.9g grad_norm=%.4f elapsed=%.1fs", step, value, lr, norm.item(), time.monotonic()-started)
                     append_metric(output, "train_loss.csv", dict(step=step, loss=value, lr=lr, elapsed=time.monotonic()-started))
@@ -319,13 +330,16 @@ def main() -> None:
     config = read_config(args.config)
     if args.check_data:
         dataset, validation, collator, train_ids, eval_ids = make_datasets(config)
-        obs, actions = collator([dataset[0], dataset[len(dataset)-1]])
+        check_batch_size = min(config["batch_size"], len(dataset))
+        indices = np.linspace(0, len(dataset) - 1, check_batch_size, dtype=int)
+        obs, actions = collator([dataset[int(index)] for index in indices])
         eval_obs, eval_actions = collator([validation[0]])
-        assert actions.shape == (2, config["policy"]["chunk_size"], 32)
+        assert actions.shape == (check_batch_size, config["policy"]["chunk_size"], config["policy"]["max_action_dim"])
         assert torch.isfinite(actions).all() and torch.isfinite(eval_actions).all()
         assert torch.count_nonzero(actions[..., config["pose_delta"]["action_dim"]:]) == 0
-        assert obs["state"].shape == (2, config["policy"]["max_action_dim"])
-        assert obs["tokenized_prompt"].shape == (2, 200)
+        assert obs["state"].shape == (check_batch_size, config["policy"]["max_action_dim"])
+        assert torch.count_nonzero(obs["state"][..., config["pose_delta"]["state_dim"]:]) == 0
+        assert obs["tokenized_prompt"].shape == (check_batch_size, config["policy"]["tokenizer_max_length"])
         shapes = validate_weights(config)
         print(json.dumps(dict(train_episodes=len(train_ids), eval_episodes=len(eval_ids),
                               train_frames=len(dataset), eval_samples=len(validation),
@@ -336,7 +350,7 @@ def main() -> None:
                               checked_pretrained_keys=shapes, cuda_initialized=torch.cuda.is_initialized()), indent=2))
         return
     if "RANK" not in os.environ:
-        parser.error("Use the four-GPU bash launcher, or --check-data for CPU validation.")
+        parser.error("Use the two/four-GPU bash launcher, or --check-data for CPU validation.")
     train(config, args.resume)
 
 

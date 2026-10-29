@@ -68,13 +68,13 @@ conda activate /home/nematrix/snap/.conda-envs/lerobot-deploy
 
 | 训练                            | 服务器输出目录（1020 端口）                                        |
 | ------------------------------- | ------------------------------------------------------------------ |
-| GPU 4 LoRA / batch 16           | `/mnt/work/dakun/outputs/DualArm_FoldTowel_pi05_rtc_lora_run7`     |
-| GPU 5、6 全量 / global batch 16 | `/mnt/work/dakun/outputs/DualArm_FoldTowel_pi05_rtc_full_gpu5_6`   |
-| GPU 7 LoRA / batch 8            | `/mnt/work/dakun/outputs/DualArm_FoldTowel_pi05_rtc_lora_gpu7_bs8` |
+| GPU 4 LoRA / batch 16           | `/mnt/work/dakun/logs/projects/lerobot/DualArm_FoldTowel_pi05_rtc_lora_run7`     |
+| GPU 5、6 全量 / global batch 16 | `/mnt/work/dakun/logs/projects/lerobot/DualArm_FoldTowel_pi05_rtc_full_gpu5_6`   |
+| GPU 7 LoRA / batch 8            | `/mnt/work/dakun/logs/projects/lerobot/DualArm_FoldTowel_pi05_rtc_lora_gpu7_bs8` |
 
 必须保留 `config.json`、`policy_preprocessor.json`、`policy_postprocessor.json` 及其引用的所有统计 `.safetensors`。
 LoRA 还要 `adapter_config.json`、`adapter_model.safetensors` 和**同一个原始 PI05 base**。全量模型使用其自己的 `model.safetensors`，无需额外 base。
-两者均需本地 PaliGemma tokenizer 完整目录；优先复制 checkpoint 自带的 tokenizer 文件，或服务器 `/mnt/work/dakun/models/paligemma-3b-pt-224`。
+两者均需本地 PaliGemma tokenizer 完整目录；优先复制 checkpoint 自带的 tokenizer 文件，或服务器 `/mnt/work/dakun/model/paligemma-3b-pt-224`。
 base 已放在 `/home/nematrix/snap/models/pi05_base`；换机器时须重新提供这份权重或修改配置。tokenizer 默认直接使用 checkpoint 内的 `tokenizer/`，换 checkpoint 也会自动选择其内置目录；需要时可用 `--tokenizer` 指定独立目录。服务器的绝对路径不会被直接使用。
 加载使用严格权重校验；文件缺失、维度/顺序不符或统计缺失立即失败。读取模型时强制离线，避免悄悄联网下载。
 

@@ -2,7 +2,10 @@
 
 import copy
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import h5py
@@ -15,7 +18,48 @@ import torch
 
 from pose_math import apply_pose_delta, interpolate_tcp, pose_delta, state_features
 from prepare_dataset import action_chunks, prepare
-from runtime import Collator, load_pose_stats, rtc_loss
+from runtime import Collator, load_pose_stats, model_config, pose_loss
+from train import read_config, validate_ddp_config
+
+
+def test_pi05_two_gpu_batch16_config_and_sampler():
+    from torch.utils.data import DataLoader, DistributedSampler
+
+    config = json.loads((Path(__file__).parent / "configs/dualarm_fold_towel_pose_delta_no_rtc_full.json").read_text())
+    assert model_config(config).pi05 is True
+    assert Path(config["policy"]["pretrained_path"]).name == "pi05_base"
+    ranks = validate_ddp_config(config, 2)
+    assert config["batch_size"] == 16
+    assert config["policy"]["rtc_training_max_delay"] == 0
+    assert config["policy"]["rtc_config"] is None
+    batches = []
+    for rank in range(ranks):
+        sampler = DistributedSampler(range(64), num_replicas=ranks, rank=rank, seed=1000)
+        loader = DataLoader(range(64), sampler=sampler, batch_size=config["batch_size"], drop_last=True)
+        batches.append(list(loader))
+    assert all(batch.shape == (16,) for rank_batches in batches for batch in rank_batches)
+    assert set(torch.cat(batches[0]).tolist()).isdisjoint(torch.cat(batches[1]).tolist())
+    assert set(torch.cat(batches[0] + batches[1]).tolist()) == set(range(64))
+    with pytest.raises(ValueError, match="WORLD_SIZE"):
+        validate_ddp_config(config, 4)
+
+
+@pytest.mark.parametrize("batch_size", [0, -1, 1.5, True])
+def test_invalid_per_rank_batch_rejected(batch_size):
+    with pytest.raises(ValueError, match="batch_size"):
+        validate_ddp_config({"parallelism": {"dp_replicate": 2, "dp_shard": 1}, "batch_size": batch_size})
+
+
+def test_launcher_uses_two_ranks_and_rejects_mismatch():
+    script = Path(__file__).parent / "train_dualarm_fold_towel_pose_delta_no_rtc_full.sh"
+    env = dict(os.environ, OPENPI_PYTHON=sys.executable, CUDA_VISIBLE_DEVICES="0,1", MASTER_PORT="29526")
+    env.pop("OPENPI_CONFIG", None)
+    result = subprocess.run(["bash", str(script), "--print-command"], env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert "--nproc-per-node=2" in result.stdout and "--master-port=29526" in result.stdout
+    env["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
+    result = subprocess.run(["bash", str(script), "--print-command"], env=env, capture_output=True, text=True)
+    assert result.returncode != 0 and "must match config" in result.stderr
 
 
 def pose(xyz=(0, 0, 0), rot=None, gripper=0.03):
@@ -83,7 +127,7 @@ def test_repeat_last_padding_does_not_cross_episode():
 @pytest.fixture
 def converted_dataset(tmp_path):
     """Two small episodes; held-out positions are far outside the training range."""
-    config = json.loads((Path(__file__).parent / "configs/dualarm_fold_towel_pose_delta_rtc_full.json").read_text())
+    config = json.loads((Path(__file__).parent / "configs/dualarm_fold_towel_pose_delta_no_rtc_full.json").read_text())
     aligned, source, output = (tmp_path / name for name in ("joint", "raw", "pose"))
     config["dataset"].update(root=str(output), eval_split=0.5)
     config["policy"]["chunk_size"] = 3
@@ -145,7 +189,8 @@ def test_conversion_labels_and_train_only_stats(converted_dataset):
         prepare(config)
 
 
-def test_collator_14d_actions_20d_state_padding_and_constant_dimensions(converted_dataset):
+@pytest.mark.parametrize("batch_size", [1, 16])
+def test_collator_14d_actions_20d_state_padding_and_constant_dimensions(converted_dataset, batch_size):
     config, output = converted_dataset
     info = json.loads((output / "meta/info.json").read_text())
     cameras = ["observation.images.image", "observation.images.image2", "observation.images.image3"]
@@ -162,25 +207,34 @@ def test_collator_14d_actions_20d_state_padding_and_constant_dimensions(converte
     targets = torch.tensor(table["action"].to_pylist()[:3])
     sample = {"observation.state": state, "action": targets, "task": "fold",
               **{camera: torch.full((3, 4, 4), index * 20, dtype=torch.uint8) for index, camera in enumerate(cameras)}}
-    observation, actions = collator([sample])
-    assert observation["state"].shape == (1, 32) and actions.shape == (1, 3, 32)
+    observation, actions = collator([sample] * batch_size)
+    assert observation["state"].shape == (batch_size, 32) and actions.shape == (batch_size, 3, 32)
     assert torch.count_nonzero(actions[..., 14:]) == 0
     assert torch.count_nonzero(observation["state"][..., 20:]) == 0
     assert torch.isfinite(actions).all()
     np.testing.assert_allclose(collator.denormalize_actions(actions.numpy()),
-                               pose_delta(state.numpy(), targets.numpy())[None], atol=1e-6)
+                               np.repeat(pose_delta(state.numpy(), targets.numpy())[None], batch_size, axis=0), atol=1e-6)
     assert torch.all(observation["images"]["base_0_rgb"] == -1)
 
 
-def test_rtc_loss_ignores_prefix_and_all_18_padding_dimensions():
-    losses = torch.ones(2, 5, 32, requires_grad=True)
-    prefix = torch.arange(5)[None] < torch.tensor([0, 3])[:, None]
-    value = rtc_loss(losses, prefix, 14)
+def test_pose_loss_trains_all_timesteps_but_excludes_padding():
+    losses = torch.arange(2 * 5 * 32, dtype=torch.float32).reshape(2, 5, 32).requires_grad_()
+    value = pose_loss(losses, 14)
+    expected = sum(losses[b, t, d].item() for b in range(2) for t in range(5) for d in range(14)) / 140
+    assert value.item() == pytest.approx(expected)
     value.backward()
-    assert value.item() == 1
     assert torch.count_nonzero(losses.grad[..., 14:]) == 0
-    assert torch.count_nonzero(losses.grad[1, :3]) == 0
-    assert torch.all(losses.grad[0, :, :14] > 0)
+    torch.testing.assert_close(losses.grad[..., :14], torch.full((2, 5, 14), 1 / 140))
+
+
+@pytest.mark.parametrize("rtc_override", [{"rtc_training_max_delay": 8}, {"rtc_config": {}}])
+def test_pose_entry_rejects_rtc_config(tmp_path, rtc_override):
+    config = json.loads((Path(__file__).parent / "configs/dualarm_fold_towel_pose_delta_no_rtc_full.json").read_text())
+    config["policy"].update(rtc_override)
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(config))
+    with pytest.raises(ValueError, match="disables RTC"):
+        read_config(path)
 
 
 def test_official_tiny_model_pose_backward(monkeypatch):
@@ -215,8 +269,15 @@ def test_official_tiny_model_pose_backward(monkeypatch):
         token_ar_mask=None, token_loss_mask=None)
     targets = np.stack([pose((0.01 * k, 0, 0)) for k in range(1, 11)])
     actions = torch.nn.functional.pad(torch.from_numpy(pose_delta(pose(), targets))[None], (0, 18))
-    prefix = torch.arange(10)[None] < 8
-    loss = rtc_loss(model(observation, actions, prefix_mask=prefix), prefix, 14)
+    observed_times = []
+    original_embed_suffix = model.embed_suffix
+    def record_time(state, noisy_actions, time):
+        observed_times.append(time.detach().clone())
+        return original_embed_suffix(state, noisy_actions, time)
+    monkeypatch.setattr(model, "embed_suffix", record_time)
+    loss = pose_loss(model(observation, actions), 14)
+    assert len(observed_times) == 1 and observed_times[0].shape == (1,)
+    assert torch.all(observed_times[0] > 0)
     loss.backward()
     assert torch.isfinite(loss)
     assert all(param.requires_grad for param in model.parameters())

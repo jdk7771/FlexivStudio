@@ -6,14 +6,14 @@
 
 GitHub git HTTPS 在此机器超时，因此源码通过 GitHub 官方 codeload 归档下载；归档中的
 commit 标记与 GitHub API 一致。来源和归档 SHA256 见 `UPSTREAM.json`，原始归档保存在
-`/mnt/work/dakun/setup_artifacts/openpi-main.tar.gz`。这是官方源码快照，不含 git 历史。
+`/mnt/work/dakun/logs/projects/lerobot/maintenance/setup_artifacts/openpi-main.tar.gz`。这是官方源码快照，不含 git 历史。
 两个上游文件的全部修改见 `rtc.patch`。
 ALOHA/LIBERO 仿真子模块不用于这次真实机器人数据训练。
 
 ## 启动
 
 ```bash
-cd /mnt/work/dakun/lerobot/src/lerobot/policies/openpi
+cd /mnt/work/dakun/repos/lerobot/src/lerobot/policies/openpi
 
 # 只打印命令，不加载模型、不占 GPU
 bash training/train_dualarm_fold_towel_rtc_full.sh --print-command
@@ -38,8 +38,8 @@ bash training/train_dualarm_fold_towel_rtc_full.sh
 | 项目 | 本次设置 |
 | --- | --- |
 | 训练方式 | 视觉编码器、VLM、动作专家全量训练；无 LoRA |
-| 初始权重 | `/mnt/work/dakun/models/pi05_base/model.safetensors`，现有 openpi 格式权重 |
-| 数据 | `/mnt/work/dakun/DualArm_FoldTowel_joint_rtc`，LeRobot v3 |
+| 初始权重 | `/mnt/work/dakun/model/pi05_base/model.safetensors`，现有 openpi 格式权重 |
+| 数据 | `/mnt/work/dakun/data/DualArm_FoldTowel_joint_rtc`，LeRobot v3 |
 | 划分 | 同一 task 最后 ceil(123 × eval_split)=11 episodes 留出；112 train / 11 eval |
 | 相机 | image → base，image2 → left_wrist，image3 → right_wrist |
 | 动作 | 16 维；14 个关节相对当前 state，夹爪索引 7、15 保持绝对值 |
@@ -67,14 +67,14 @@ bash training/train_dualarm_fold_towel_rtc_full.sh
 
 ## 输出与续训
 
-输出目录：`/mnt/work/dakun/outputs/openpi_pi05_dualarm_fold_towel_rtc_full`。
+输出目录：`/mnt/work/dakun/logs/projects/lerobot/openpi_pi05_dualarm_fold_towel_rtc_full`。
 非空目录不会被新训练覆盖。根目录保存实际配置、episode 划分、训练源码快照、
 `train_loss.csv`、`eval_loss.csv`。每个 `checkpoints/002500` 等目录保存模型权重、优化器、
 每 rank RNG、step/epoch/batch offset、配置和数据统计；先写 `.incomplete` 后原子改名。
 
 ```bash
 bash training/train_dualarm_fold_towel_rtc_full.sh --resume \
-  /mnt/work/dakun/outputs/openpi_pi05_dualarm_fold_towel_rtc_full/checkpoints/002500
+  /mnt/work/dakun/logs/projects/lerobot/openpi_pi05_dualarm_fold_towel_rtc_full/checkpoints/002500
 ```
 
 续训自动使用检查点的 `train_config.json`，并恢复对应 epoch 的 batch 位置。
@@ -93,7 +93,7 @@ bash training/train_dualarm_fold_towel_rtc_full.sh --resume \
 所以此前 7550、7600 的记录会保留，分析曲线时同 step 应取最后一条。
 
 ```bash
-cd /mnt/work/dakun/lerobot/src/lerobot/policies/openpi
+cd /mnt/work/dakun/repos/lerobot/src/lerobot/policies/openpi
 
 # 预览恢复路径和四卡启动命令，不启动训练
 bash training/resume_dualarm_fold_towel_rtc_full_1024.sh --print-command
@@ -103,9 +103,9 @@ bash training/resume_dualarm_fold_towel_rtc_full_1024.sh
 
 # 或后台续训：与上面的前台命令二选一
 nohup bash training/resume_dualarm_fold_towel_rtc_full_1024.sh \
-  > /mnt/work/dakun/outputs/openpi_pi05_dualarm_fold_towel_rtc_full/resume_1024.log 2>&1 &
+  > /mnt/work/dakun/logs/projects/lerobot/openpi_pi05_dualarm_fold_towel_rtc_full/resume_1024.log 2>&1 &
 echo $!
-tail -f /mnt/work/dakun/outputs/openpi_pi05_dualarm_fold_towel_rtc_full/resume_1024.log
+tail -f /mnt/work/dakun/logs/projects/lerobot/openpi_pi05_dualarm_fold_towel_rtc_full/resume_1024.log
 ```
 
 也可以通过通用入口 `--resume latest` 自动选检查点，或 `--resume CHECKPOINT_DIR`
@@ -118,8 +118,8 @@ tail -f /mnt/work/dakun/outputs/openpi_pi05_dualarm_fold_towel_rtc_full/resume_1
 先退出旧训练，再执行：
 
 ```bash
-cd /mnt/work/dakun/lerobot/src/lerobot/policies/openpi
-tmux new-session -s pi05-2gpu 'env CUDA_VISIBLE_DEVICES=4,5 MASTER_PORT=29525 bash training/train_dualarm_fold_towel_rtc_full.sh --resume /mnt/work/dakun/outputs/openpi_pi05_dualarm_fold_towel_rtc_full/checkpoints/045000 2>&1 | tee -a /mnt/work/dakun/outputs/openpi_pi05_dualarm_fold_towel_rtc_full/resume_2gpu.log'
+cd /mnt/work/dakun/repos/lerobot/src/lerobot/policies/openpi
+tmux new-session -s pi05-2gpu 'env CUDA_VISIBLE_DEVICES=4,5 MASTER_PORT=29525 bash training/train_dualarm_fold_towel_rtc_full.sh --resume /mnt/work/dakun/logs/projects/lerobot/openpi_pi05_dualarm_fold_towel_rtc_full/checkpoints/045000 2>&1 | tee -a /mnt/work/dakun/logs/projects/lerobot/openpi_pi05_dualarm_fold_towel_rtc_full/resume_2gpu.log'
 ```
 
 按 `Ctrl+b` 后按 `d` 脱离会话，`tmux attach -t pi05-2gpu` 返回。
@@ -127,7 +127,7 @@ tmux new-session -s pi05-2gpu 'env CUDA_VISIBLE_DEVICES=4,5 MASTER_PORT=29525 ba
 
 ## 环境
 
-`.venv` 使用现有 `/mnt/work/dakun/conda-envs/lerobot` 作为只读基础，复用
+`.venv` 使用现有 `/mnt/work/dakun/envs/lerobot` 作为只读基础，复用
 PyTorch 2.7.1+cu118、torchcodec、FFmpeg 等。单独安装 transformers 4.53.2、
 CPU JAX/Flax、Accelerate 1.10.1、LeRobot 0.4.4 的 v3 数据读取器，以及兼容现有 PyArrow
 的 NumPy 2.2.6。当前本地 LeRobot 主线依赖 transformers 5 / huggingface_hub 1，不能直接与
@@ -143,3 +143,10 @@ bash training/setup.sh
 检查数据和单元测试不启动完整模型训练。全尺寸四卡显存/吞吐需要正式启动后确认。
 
 通用入口支持通过 `CUDA_VISIBLE_DEVICES` 选择两卡或四卡，保持原配置的全局 batch：例如原四卡每卡 8，改双卡后每卡 16。续训仅允许保持全局 batch 的卡数切换，恢复已保存 step、优化器和 batch 位置；卡数变化时随机采样不保证逐位一致。专用 1024 入口仍默认四卡。
+
+## 2026-10-28 环境与路径整理
+
+现有 OpenPI overlay 已迁到 `/mnt/work/dakun/envs/openpi`，启动与安装脚本默认使用此处。
+旧仓库内 `.venv` 保留为兼容链接；基础环境位于 `/mnt/work/dakun/envs/lerobot`。
+旧 `environment.json`、验证记录与源码快照记录的是原环境，不随路径迁移改写。
+当前模型、数据、输出分别使用工作区的 `model/`、`data/`、`logs/projects/lerobot/`。

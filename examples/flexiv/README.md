@@ -52,7 +52,7 @@ bash examples/flexiv/setup/setup_local_deploy.sh
 
 ## 两端代码同步
 
-本地代码：`/home/nematrix/snap/lerobot`；训练服务器代码：`/mnt/work/dakun/lerobot`。两端共用 `src/lerobot`，环境分别使用本地 cu128 与服务器 cu118。
+本地代码：`/home/nematrix/snap/lerobot`；训练服务器代码：`/mnt/work/dakun/repos/lerobot`。两端共用 `src/lerobot`，环境分别使用本地 cu128 与服务器 cu118。
 
 新机器克隆时保留 `lerobot` 目录名：
 

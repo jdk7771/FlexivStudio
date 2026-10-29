@@ -3,7 +3,7 @@ set -euo pipefail
 
 task_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 task_root="$(cd -- "$task_dir/.." && pwd)"
-task_python="${OPENPI_PYTHON:-$task_root/.venv/bin/python}"
+task_python="${OPENPI_PYTHON:-/mnt/work/dakun/envs/openpi/bin/python}"
 task_config="${OPENPI_CONFIG:-$task_dir/configs/dualarm_fold_towel_rtc_full.json}"
 task_print=false
 task_check=false
@@ -55,6 +55,7 @@ export MASTER_PORT="${MASTER_PORT:-29520}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
 export TOKENIZERS_PARALLELISM=false
 export JAX_PLATFORMS=cpu
+export HF_HOME="${HF_HOME:-/mnt/work/dakun/data/cache/huggingface}"
 export HF_HUB_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 export PYTHONPATH="$task_root/src:$task_dir"

@@ -1,14 +1,14 @@
 {
   "dataset": {
     "repo_id": "local/DualArm_FoldTowel_joint_rtc",
-    "root": "/mnt/work/dakun/DualArm_FoldTowel_joint_rtc",
+    "root": "/mnt/work/dakun/data/DualArm_FoldTowel_joint_rtc",
     "video_backend": "torchcodec",
     "eval_split": 0.08536585365853659
   },
   "policy": {
     "type": "openpi_pi05",
-    "pretrained_path": "/mnt/work/dakun/models/pi05_base",
-    "text_tokenizer_name": "/mnt/work/dakun/models/paligemma-3b-pt-224",
+    "pretrained_path": "/mnt/work/dakun/model/pi05_base",
+    "text_tokenizer_name": "/mnt/work/dakun/model/paligemma-3b-pt-224",
     "device": "cuda",
     "dtype": "bfloat16",
     "push_to_hub": false,
@@ -37,7 +37,7 @@
     "tokenizer_max_length": 200,
     "image_augmentation": false
   },
-  "output_dir": "/mnt/work/dakun/outputs/openpi_pi05_dualarm_fold_towel_rtc_full",
+  "output_dir": "/mnt/work/dakun/logs/projects/lerobot/openpi_pi05_dualarm_fold_towel_rtc_full",
   "job_name": "openpi_pi05_dualarm_fold_towel_rtc_full",
   "seed": 1000,
   "batch_size": 8,

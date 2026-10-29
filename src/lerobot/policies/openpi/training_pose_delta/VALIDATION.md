@@ -1,4 +1,40 @@
-# 验证记录（2026-10-27）
+# 验证记录
+
+## 2026-10-28：改为无 RTC pose 训练
+
+- 当前配置改名为 `configs/dualarm_fold_towel_pose_delta_no_rtc_full.json`，
+  对应 `train_dualarm_fold_towel_pose_delta_no_rtc_full.sh`，使用独立 `pose_delta_no_rtc_full` 输出目录。
+- `rtc_training_max_delay=0`、`rtc_config=null`；训练和验证直接调用普通模型前向，
+  不采样 RTC delay，不传 `prefix_mask`。loss 平均所有时间步的 14 个有效动作维度。
+- `--test`：19 passed，验证所有动作时间步参与梯度、18 个补齐维度不参与 loss，
+  普通前向使用每个样本一个时间值，完整模型梯度有限，误传 RTC 配置会被拒绝。
+- 新配置 `--check-data` 通过：batch 16，动作 `[16,50,32]`，112 train / 11 eval episodes，
+  20D state / 14D action，813 个预训练权重键和形状匹配，`cuda_initialized=false`。
+- 双卡每卡 batch 16、总 batch 32，数据、pose 几何与统计不变。历史数据目录名仍含 `_rtc`，
+  不代表训练开启 RTC。joint 训练源码与运行配置哈希保持不变。
+- 未启动新训练，未修改共享模型中的 joint RTC 分支。
+
+## 2026-10-28：官方 π0.5 双卡，每卡 batch 16
+
+- 确认 `model_config().pi05=True`，从 `pi05_base` 加载官方 π0.5 权重。
+- 默认 2 个 DDP rank、每卡 batch 16、全局 batch 32；采样器和 loss 平均使用实际 world size。
+  启动器拒绝可见 GPU 数与配置不匹配，默认 GPU 0、1，独立端口 29526。
+- `--test`：17 passed，包含双卡数据分片、模型选择、batch 16 pose collator、
+  启动参数及错误配置拒绝，以及原几何/转换/归一化/官方缩小模型反向测试。
+- `--check-data`：112 train / 11 eval episodes、25,957 train frames、256 eval samples；
+  真实 batch 16 动作 shape `[16,50,32]`，实际 14D action / 20D state，三路视频与 tokenizer 通过；
+  813 个预训练权重键和形状匹配，`cuda_initialized=false`。
+- pose 视频原链接指向已断开的 `/mnt/data/dakun/DualArm_FoldTowel_joint_rtc/videos`。
+  `/mnt/work/dakun/DualArm_FoldTowel_joint_rtc/SHA256SUMS` 全部 9 个文件通过，
+  joint conversion manifest 哈希与 pose 记录一致，故将 pose 的视频链接原子切换到
+  `/mnt/work/dakun/DualArm_FoldTowel_joint_rtc/videos`。原链接与核验说明备份于
+  `/mnt/work/dakun/code_backups/pose_video_link_repair_20261028.json`。
+- pose 统计哈希仍为 `3bfb824c0e837fae5c22c3b510531d9e8c8169f2ab6e1da639e89c1c0d9f58bc`。
+- joint 训练源码、bash、配置及当前恢复配置的哈希保持不变，训练日志正常推进至 45500。
+
+未启动 pose 全尺寸 GPU 训练；双卡显存峰值、速度和训练效果待正式运行验证。
+
+## 2026-10-27：原四卡入口验证
 
 - `--test`：10 passed。验证 base/TCP 两种坐标系的非交换旋转和反变换、
   chunk 共同原点、左右臂独立性、四元数正负等价与 ±π 附近连续性、

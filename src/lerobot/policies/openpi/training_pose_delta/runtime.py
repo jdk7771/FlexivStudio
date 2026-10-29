@@ -1,4 +1,4 @@
-"""Independent TCP pose-delta adapter and RTC objective for official OpenPI."""
+"""TCP pose-delta adapter and full-chunk flow-matching loss for official OpenPI pi0.5."""
 
 import json
 import math
@@ -41,18 +41,9 @@ def split_episodes(meta, fraction):
     return train, validation
 
 
-def sample_prefix_mask(actions, max_delay):
-    if not 0 <= max_delay < actions.shape[1]:
-        raise ValueError("RTC delay must be in [0, action_horizon).")
-    delays = torch.randint(max_delay + 1, (actions.shape[0],), device=actions.device)
-    return torch.arange(actions.shape[1], device=actions.device)[None, :] < delays[:, None]
-
-
-def rtc_loss(losses, prefix_mask, action_dim):
-    """Match LeRobot: average only real action dimensions and the predicted postfix."""
-    losses = losses[..., :action_dim]
-    weights = (~prefix_mask)[..., None].expand_as(losses)
-    return (losses * weights).sum() / weights.sum().clamp_min(1)
+def pose_loss(losses: torch.Tensor, action_dim: int) -> torch.Tensor:
+    """Average all chunk timesteps and physical action dimensions, excluding padding."""
+    return losses[..., :action_dim].mean()
 
 
 def learning_rate(step, policy):
@@ -155,5 +146,5 @@ def model_config(config):
     return SimpleNamespace(
         pi05=True, dtype=p["dtype"], action_dim=p["max_action_dim"], action_horizon=p["chunk_size"],
         paligemma_variant="gemma_2b", action_expert_variant="gemma_300m", pytorch_compile_mode=None,
-        image_augmentation=p["image_augmentation"], rtc_training_max_delay=p["rtc_training_max_delay"],
+        image_augmentation=p["image_augmentation"],
     )

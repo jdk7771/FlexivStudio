@@ -1,20 +1,20 @@
 {
   "dataset": {
     "repo_id": "local/DualArm_FoldTowel_pose_rtc",
-    "root": "/mnt/work/dakun/DualArm_FoldTowel_pose_rtc",
+    "root": "/mnt/work/dakun/data/DualArm_FoldTowel_pose_rtc",
     "video_backend": "torchcodec",
     "eval_split": 0.08536585365853659
   },
   "policy": {
     "type": "openpi_pi05",
-    "pretrained_path": "/mnt/work/dakun/models/pi05_base",
-    "text_tokenizer_name": "/mnt/work/dakun/models/paligemma-3b-pt-224",
+    "pretrained_path": "/mnt/work/dakun/model/pi05_base",
+    "text_tokenizer_name": "/mnt/work/dakun/model/paligemma-3b-pt-224",
     "device": "cuda",
     "dtype": "bfloat16",
     "push_to_hub": false,
     "use_relative_actions": false,
     "chunk_size": 50,
-    "rtc_training_max_delay": 8,
+    "rtc_training_max_delay": 0,
     "use_peft": false,
     "freeze_vision_encoder": false,
     "train_expert_only": false,
@@ -32,12 +32,13 @@
     "scheduler_decay_lr": 2.5e-06,
     "max_action_dim": 32,
     "tokenizer_max_length": 200,
-    "image_augmentation": false
+    "image_augmentation": false,
+    "rtc_config": null
   },
-  "output_dir": "/mnt/work/dakun/outputs/openpi_pi05_dualarm_fold_towel_pose_delta_rtc_full",
-  "job_name": "openpi_pi05_dualarm_fold_towel_pose_delta_rtc_full",
+  "output_dir": "/mnt/work/dakun/logs/projects/lerobot/openpi_pi05_dualarm_fold_towel_pose_delta_no_rtc_full",
+  "job_name": "openpi_pi05_dualarm_fold_towel_pose_delta_no_rtc_full",
   "seed": 1000,
-  "batch_size": 8,
+  "batch_size": 16,
   "num_workers": 4,
   "steps": 50000,
   "save_freq": 2500,
@@ -46,7 +47,7 @@
   "eval_steps": 1000,
   "max_eval_samples": 256,
   "parallelism": {
-    "dp_replicate": 4,
+    "dp_replicate": 2,
     "dp_shard": 1
   },
   "accelerator": {
@@ -79,8 +80,8 @@
     "stats_file": "meta/pose_delta_stats.json"
   },
   "preparation": {
-    "source_root": "/mnt/work/dakun/DualArm_FoldTowel_joint_rtc/data/template_test",
-    "aligned_joint_root": "/mnt/work/dakun/DualArm_FoldTowel_joint_rtc",
+    "source_root": "/mnt/work/dakun/data/DualArm_FoldTowel_joint_rtc/data/template_test",
+    "aligned_joint_root": "/mnt/work/dakun/data/DualArm_FoldTowel_joint_rtc",
     "max_lowdim_gap_ms": 50
   }
 }
